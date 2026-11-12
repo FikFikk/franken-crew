@@ -1,0 +1,41 @@
+# Binaries & Build Artifacts
+bin/
+dist/
+out/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+vendor/
+
+# Node & Package Managers
+node_modules/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment & Secrets
+.env
+.env.*
+*.local
+*.pem
+*.key
+wa-session.db*
+*.sqlite
+*.sqlite-journal
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Kiro - MANDATORY SUBMISSION REQUIREMENT
+# Never ignore .kiro or subdirectories
+!.kiro/
+!.kiro/**
