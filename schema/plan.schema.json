@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FrankenCrewRemediationPlan",
+  "description": "JSON Schema for Kiro Crew Architect remediation plans",
+  "type": "object",
+  "required": [
+    "incident_id",
+    "suspected_root_cause",
+    "options",
+    "human_follow_up"
+  ],
+  "properties": {
+    "incident_id": {
+      "type": "string",
+      "pattern": "^INC-[0-9]{8}-[0-9]{4}-[a-zA-Z0-9_-]+$"
+    },
+    "suspected_root_cause": {
+      "type": "string",
+      "minLength": 5
+    },
+    "options": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "steps"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": ["A", "B", "C", "D"]
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "action",
+                "params",
+                "evidence_ids",
+                "expected_effect"
+              ],
+              "properties": {
+                "id": { "type": "string" },
+                "action": { "type": "string" },
+                "params": { "type": "object" },
+                "evidence_ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": { "type": "string" }
+                },
+                "expected_effect": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "human_follow_up": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

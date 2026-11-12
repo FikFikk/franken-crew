@@ -1,0 +1,128 @@
+# Single-source catalog of actions and security policies for FrankenCrew Sentinel
+
+version: "1.0"
+
+protected_units:
+  - "init"
+  - "systemd"
+  - "sshd"
+  - "sshd.service"
+  - "systemd-journald"
+  - "systemd-journald.service"
+  - "systemd-logind"
+  - "systemd-logind.service"
+  - "dbus"
+  - "dbus.service"
+  - "tailscaled"
+  - "tailscaled.service"
+  - "franken-sentinel"
+  - "franken-sentinel.service"
+  - "wa-bridge"
+  - "wa-bridge.service"
+  - "kiro-crew"
+  - "kiro-crew.service"
+
+protected_pids:
+  - 1
+
+actions:
+  # L0: Observe (Read-only telemetry & inspection)
+  - name: "node_snapshot"
+    tier: "L0"
+    description: "Read host resources, memory, and PSI overview"
+  - name: "psi_history"
+    tier: "L0"
+    description: "Fetch historical PSI avg10/avg60/avg300 metrics"
+  - name: "cgroup_top"
+    tier: "L0"
+    description: "Inspect top cgroups by memory consumption"
+  - name: "journal_tail"
+    tier: "L0"
+    description: "Fetch redacted logs for a given unit"
+  - name: "process_tree"
+    tier: "L0"
+    description: "Inspect process hierarchy within a cgroup"
+  - name: "zombie_report"
+    tier: "L0"
+    description: "Detect zombie processes grouped by PPID"
+  - name: "incident_get"
+    tier: "L0"
+    description: "Retrieve incident metadata and captured evidence"
+  - name: "incident_list"
+    tier: "L0"
+    description: "List open or recent incidents"
+  - name: "incident_claim"
+    tier: "L0"
+    description: "Claim incident for Kiro Crew processing"
+
+  # L1: Reflex (Automatic, reversible, bounded TTL)
+  - name: "cgroup_reclaim"
+    tier: "L1"
+    description: "Trigger proactive cgroup cold memory reclaim via memory.reclaim"
+    params:
+      cgroup: { type: "string", required: true }
+      bytes: { type: "integer", required: true }
+    max_reclaim_pct: 25.0
+  - name: "cgroup_throttle"
+    tier: "L1"
+    description: "Throttle memory growth using systemd runtime MemoryHigh"
+    params:
+      unit: { type: "string", required: true }
+      memory_high: { type: "string", required: true }
+      ttl_seconds: { type: "integer", required: true }
+    max_ttl_seconds: 900
+  - name: "admission_close"
+    tier: "L1"
+    description: "Close ingress admission pool to shed incoming traffic"
+    params:
+      app: { type: "string", required: true }
+      ttl_seconds: { type: "integer", required: true }
+    max_ttl_seconds: 900
+
+  # L2: Approved (Requires human vote and Ed25519 approval token)
+  - name: "pm2_reload"
+    tier: "L2"
+    description: "Graceful reload of PM2 cluster worker instances"
+    params:
+      app: { type: "string", required: true }
+  - name: "pm2_restart_instance"
+    tier: "L2"
+    description: "Restart specific PM2 worker instance"
+    params:
+      app: { type: "string", required: true }
+      pm_id: { type: "integer", required: true }
+  - name: "unit_restart"
+    tier: "L2"
+    description: "Restart unprotected systemd service unit"
+    params:
+      unit: { type: "string", required: true }
+  - name: "process_terminate"
+    tier: "L2"
+    description: "Terminate process via SIGTERM followed by SIGKILL grace period"
+    params:
+      pid: { type: "integer", required: true }
+  - name: "zombie_reap"
+    tier: "L2"
+    description: "Send SIGCHLD to parent process to reap zombie child"
+    params:
+      parent_pid: { type: "integer", required: true }
+
+  # L3: Forbidden (Absolute Prohibitions)
+  - name: "raw_shell"
+    tier: "L3"
+    description: "Arbitrary shell invocation (sh -c, bash -c, eval)"
+  - name: "file_delete"
+    tier: "L3"
+    description: "Direct file deletion or truncation"
+  - name: "power_action"
+    tier: "L3"
+    description: "Reboot, poweroff, halt, or SysRq triggers"
+  - name: "persistent_config"
+    tier: "L3"
+    description: "Modifications to /etc, crontabs, or persistent sysctl"
+  - name: "global_drop_caches"
+    tier: "L3"
+    description: "Global cache drop via /proc/sys/vm/drop_caches"
+  - name: "modify_memory_max"
+    tier: "L3"
+    description: "Reducing hard memory limit below active working set"

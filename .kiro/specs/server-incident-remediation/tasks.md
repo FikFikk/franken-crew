@@ -19,17 +19,17 @@
   - [x] 3.3 Table tests from recorded fixtures
   - _Requirements: 2.1–2.5_
 
-- [ ] 4. Incident store
-  - [ ] 4.1 SQLite schema (incidents, evidence, reflexes, audit, nonces) with migrations
-  - [ ] 4.2 State machine with guarded transitions
-  - [ ] 4.3 Evidence capture + redaction pipeline with tests for every redaction class
+- [x] 4. Incident store
+  - [x] 4.1 SQLite schema (incidents, evidence, reflexes, audit, nonces) with migrations
+  - [x] 4.2 State machine with guarded transitions
+  - [x] 4.3 Evidence capture + redaction pipeline with tests for every redaction class
   - _Requirements: 4.1–4.4, 10.2_
 
-- [ ] 5. Policy engine and executor
-  - [ ] 5.1 Action catalog + tier table + protected list (single source: `policy/actions.yaml`)
-  - [ ] 5.2 `plan.schema.json` validation + canonical JSON `plan_hash`
-  - [ ] 5.3 Fixed-argv executor with timeouts and process-group kill
-  - [ ] 5.4 Property tests P1, P4
+- [x] 5. Policy engine and executor
+  - [x] 5.1 Action catalog + tier table + protected list (single source: `policy/actions.yaml`)
+  - [x] 5.2 `plan.schema.json` validation + canonical JSON `plan_hash`
+  - [x] 5.3 Fixed-argv executor with timeouts and process-group kill
+  - [x] 5.4 Property tests P1, P4
   - _Requirements: 6.2–6.4, 8.1, 8.3, 8.4_
 
 - [ ] 6. Reflex engine
