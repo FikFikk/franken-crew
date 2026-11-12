@@ -1,6 +1,6 @@
 # FrankenCrew — Dokumentasi Logika Bisnis
 
-> Status: **Rancangan** (belum diimplementasi). Sumber detail teknis: [docs/BLUEPRINT.md](docs/BLUEPRINT.md) dan [.kiro/specs/server-incident-remediation/](.kiro/specs/server-incident-remediation/).
+> Status: **Tahap 1 Diimplementasikan** (`internal/kernelfs`, `internal/psi`, `internal/detector`). Sumber detail teknis: [docs/BLUEPRINT.md](docs/BLUEPRINT.md) dan [.kiro/specs/server-incident-remediation/](.kiro/specs/server-incident-remediation/).
 
 ## 1. Siklus Hidup Incident
 
