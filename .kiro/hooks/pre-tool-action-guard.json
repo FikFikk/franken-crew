@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Pre-Tool Action & Protected Target Guard",
+      "description": "Block L3 destructive operations and protected PIDs/units (PID 1, sshd, sentinel, tailscaled) with exit code 2 while recording redacted audit logs.",
+      "enabled": true,
+      "trigger": "PreToolUse",
+      "matcher": "@franken-sentinel/*",
+      "action": {
+        "type": "command",
+        "command": "franken guard --audit"
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Secret Redaction & Incident Store Verification",
+      "description": "Ensure secrets, tokens, passwords, and DSNs remain redacted before persistence and verify SQLite state transitions.",
+      "enabled": true,
+      "trigger": "PostFileSave",
+      "matcher": "internal/{redact,incident}/**",
+      "action": {
+        "type": "command",
+        "command": "go test -count=1 ./internal/redact/... ./internal/incident/..."
+      }
+    }
+  ]
+}
+

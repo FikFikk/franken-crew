@@ -1,100 +1,82 @@
-# FrankenCrew: The Resilient Server Sentry 🧟‍♂️⚡
+# FrankenCrew
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Kiroween 2026](https://img.shields.io/badge/Kiroween_2026-Frankenstein_Category-brightgreen.svg)](https://devpost.com)
-[![Kiro Specs](https://img.shields.io/badge/Kiro_Specs-Verified-blue.svg)](.kiro/specs/)
+**FrankenCrew** is a Two-Speed autonomous Linux server self-healing sentinel paired with **Kiro CLI Crew** and human-in-the-loop WhatsApp approvals.
 
-> **"Stitched from spare parts. Never sleeps. So you can."**  
-> An autonomous, ultra-lightweight multi-agent server sentry designed for indie hackers, homelabbers, and resource-constrained VPS/SBC servers (1–2 GB RAM).
+> **Status (Sentinel Core + Kiro Configuration Complete)**
+> - **Implemented & Tested (Go 1.25+, pure-Go static binary `CGO_ENABLED=0`):** Kernel telemetry (`kernelfs`, `psi`, `cgroup`, `journal`), EWMA Time-To-OOM `detector`, SQLite WAL `incident` store & `redact` pipeline, single-source `policy` & fixed-argv `executor`, L1 TTL `reflex` engine, Ed25519 `approval` protocol, Streamable HTTP/SSE & stdio `mcpserver`, unified `sentinel` daemon, and the `franken` CLI (`keys init`, `sentinel serve`, `mcp serve|stdio|connect`, `guard`).
+> - **Implemented Kiro Customization Stack (`.kiro/`):** Spec-driven development specs, multi-mode steering documents, 5 deterministic `v1` hooks (including `PreToolUse` blocking via `franken guard --audit`), 3 MCP-only specialized agents (`franken-sentry`, `franken-architect`, `franken-remediator`), and `.kiro/settings/mcp.json`.
+> - **Planned Next Milestones:** `wa-bridge` (WhatsApp poll/approval signer using `whatsmeow`) and the read-only **Haunted Lab** observability web dashboard.
 
-Built for **Kiroween 2026** (Devpost & AWS Hackathon) under the **Frankenstein Category**, targeting **Best Kiro Crew App** and **Best Demo**.
+## Two-Speed Self-Healing Architecture
 
----
+1. **Speed 1 — Deterministic Kernel Reflex (`internal/sentinel`, `< 250 ms`):** Watches `/proc/pressure/memory` (`POLLPRI`), `cgroup v2` `memory.pressure`, `memory.events` (`inotify`), and systemd `journalctl` JSON streams while sampling at `1 Hz` into a rolling ring buffer. On P1/P2 memory pressure or `oom_kill`, applies bounded, TTL-reversible L1 reflexes (`cgroup_reclaim` ≤ 25% of `memory.current`, runtime `MemoryHigh` throttling ≥ current usage and ≤ 95% host RAM) backed by persistent SQLite rollback state.
+2. **Speed 2 — AI Reasoning + Cryptographic Human Approval (`.kiro/agents/`, MCP, Ed25519):** AI agents (`franken-sentry` → `franken-architect` → `franken-remediator`) connect strictly through Sentinel MCP tools, cite redacted `evidence_id` snapshots, compute canonical SHA-256 `plan_hash` values, require single-use Ed25519 approval tokens for L2 mutations, and verify 120 seconds of healthy PSI (`some_avg10 < 5.0` and `full_avg10 < 1.0`) before resolving incidents.
 
-## 🔬 The Frankenstein Stitch
+## Non-Negotiable Safety Guardrails
 
-FrankenCrew stitches together three contrast domains into an unexpectedly powerful resilience engine:
+- **No Raw Shell Execution:** Fixed `exec.Command(binary, args...)` allowlist only; `sh -c` and `bash -c` are forbidden in both Sentinel and `franken guard`.
+- **Protected Infrastructure:** PID 1, kernel threads, `sshd`, `systemd-journald`, `systemd-logind`, `dbus`, `tailscaled`, `franken-sentinel`, `wa-bridge`, and `kiro-crew` are hard-blocked across policy, reflex, executor, MCP tools, and Kiro `PreToolUse` hooks.
+- **Secret Redaction at Source:** Bearer tokens, API keys (`sk-*`), passwords, JWTs, phone numbers/JIDs, and connection strings are redacted in memory before storage or SSE streaming.
+- **Private Control Plane Only:** Sentinel HTTP binds only to Tailscale CGNAT (`100.64.0.0/10` / `fd7a:115c:a1e0::/48`), loopback, or private interfaces with mandatory Bearer auth.
 
-```
-┌─────────────────────────────────┐
-│  Low-Level Linux Kernel (Edge)  │ ➔ cgroups v2, PSI (Pressure Stall Information),
-│    franken-sentinel daemon      │   inotify on memory.events, lightweight journald
-└────────────────┬────────────────┘
-                 │ (Deterministic Reflex < 250ms & Telemetry)
-                 ▼
-┌─────────────────────────────────┐
-│  Kiro Multi-Agent Crew (Brain)  │ ➔ Spec-driven orchestration, steering guardrails,
-│   Sentry ➔ Architect ➔ Remediator│   MCP tools, and deterministic approval tokens
-└────────────────┬────────────────┘
-                 │ (Ed25519 Capability-Bound Approval Protocol)
-                 ▼
-┌─────────────────────────────────┐
-│   Headless WhatsApp Gateway     │ ➔ Two-way interactive native polls & reports
-│     wa-bridge (Go/whatsmeow)    │   directly to developer's phone without extra apps
-└─────────────────────────────────┘
-```
-
-1. **Kernel Telemetry & Deterministic Reflex (Go):** Direct epoll on Linux kernel `memory.pressure` (PSI) triggers. Detects memory stall and computes Time-To-OOM (TTO) in milliseconds before the Linux OOM killer wipes processes. Automatically applies reversible Level 1 (L1) reflexes.
-2. **Kiro Crew Autonomous Reasoning:** A 3-agent orchestration (Sentry, Architect, Remediator) using Kiro Specs (`requirements.md`, `design.md`, `tasks.md`) and steering rules. When a restart or destructive action (Level 2) is needed, the Architect drafts a plan validated against strict policy.
-3. **Headless Two-Way WhatsApp Messaging:** Sends instant alerts and native polls directly to the developer's smartphone. Human single-tap votes mint single-use Ed25519 approval tokens that authorize the Remediator to execute safe mutations.
-
----
-
-## 📁 Repository Structure & `.kiro` Directory
-
-This repository strictly complies with the Kiroween hackathon requirements:
+## Repository Layout
 
 ```text
-franken-crew/
-├── .kiro/                               # Mandatory Kiro configuration root
-│   ├── steering/                        # Guardrails & boundary rules for agents
-│   │   └── rules.md                     # Action tiers (L0-L3), safety constraints
-│   ├── specs/                           # Spec-driven development blueprints
-│   │   └── server-incident-remediation/ # Formal incident remediation spec
-│   │       ├── requirements.md          # EARS-compliant requirements
-│   │       ├── design.md                # System design & incident state machine
-│   │       └── tasks.md                 # Concrete implementation tasks
-│   ├── hooks/                           # Lifecycle hooks & quality gates
-│   └── agents/                          # Custom agent definitions
-├── docs/
-│   └── BLUEPRINT.md                     # Comprehensive technical blueprint (A to Z)
-├── documentation.md                     # Business logic, state transitions & lifecycle
-├── documentation-api.md                 # MCP tools, HTTP endpoints & scheduled tasks
-├── LICENSE                              # MIT License
-└── README.md
+cmd/franken/                  # Unified CLI (`keys init`, `sentinel serve`, `mcp serve|stdio|connect`, `guard`)
+internal/
+  kernelfs/                   # Kernel capability probe (cgroup v2, PSI, /proc/meminfo) + MemFS test double
+  psi/                        # PSI POLLPRI epoll trigger watcher with 1 Hz fallback polling
+  cgroup/                     # inotify memory.events delta watcher, 1 Hz sampler, /proc zombie scanner
+  journal/                    # journalctl --follow --output=json parser + secret redaction
+  detector/                   # EWMA slope estimator, Time-To-OOM classifier, hysteresis & debounce
+  incident/                   # Pure-Go SQLite (modernc.org/sqlite) WAL store & strict state machine
+  redact/                     # Secret/PII scrubber applied before persistence and transport
+  policy/                     # Single-source actions.yaml loader, plan.schema.json validator, canonical SHA-256 plan_hash
+  executor/                   # Fixed-argv allowlisted runner with process-group timeout kills
+  reflex/                     # Reversible L1 reflexes + persistent SQLite TTL rollback scheduler
+  approval/                   # Ed25519 keygen (`keys init`), token minter, anti-replay nonce verifier
+  mcpserver/                  # Official go-sdk MCP server (`/mcp`, `/v1/events` SSE, `/healthz`, stdio)
+  sentinel/                   # Unified Sentinel daemon orchestrating collectors, reflexes, SQLite & MCP/SSE
+policy/                       # `actions.yaml` catalog & `plan.schema.json`
+.kiro/
+  steering/                   # `rules.md`, `product.md`, `tech.md`, `structure.md`, `linux-kernel.md`, `incident-response.md`
+  specs/                      # Requirements, design, and task breakdown (`server-incident-remediation`)
+  hooks/                      # Kiro v1 hooks (`policy-sync`, `executor-guard`, `redaction-test`, `pre-tool-action-guard`, `spec-verify-on-stop`)
+  agents/                     # `franken-sentry.json`, `franken-architect.json`, `franken-remediator.json`
+  settings/mcp.json           # MCP client profile connecting via `franken mcp connect`
 ```
 
----
+## Build, Verify, and Run
 
-## ⚡ Two-Speed Architecture
+```bash
+# Run static checks and full unit/integration test suite (no root required)
+go vet ./...
+go test -count=1 ./...
 
-| Layer | Speed | Executor | Authority & Scope |
-|---|---|---|---|
-| **Reflex Path** | 1–250 ms | `franken-sentinel` (Go) | Level 1: Reversible (e.g. `cgroup_throttle`, `cgroup_reclaim`), automatic TTL rollback |
-| **Reasoning Path** | 30–90 sec | Kiro Multi-Agent Crew | Level 0: Observability, triage, writing incident specs and remediation plans |
-| **Decision Path** | Seconds | Human via WhatsApp Poll | Level 2: Irreversible mutations require human vote producing an Ed25519 token |
+# Install `franken` CLI on PATH (required so `PreToolUse` hook preserves exit code 2 directly)
+go install ./cmd/franken
 
----
+# Build static Linux binaries (pure Go, CGO_ENABLED=0)
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/franken-linux-arm64 ./cmd/franken
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/franken-linux-amd64 ./cmd/franken
 
-## 🛡️ Non-Negotiable Guardrails
+# Provision Ed25519 approval keys (0600 private key for wa-bridge, 0644 public key for Sentinel)
+go run ./cmd/franken keys init --dir keys
 
-- **Zero Raw Shell:** No arbitrary `sh -c` or `bash -c`. The executor runs only allowlisted, static argv templates.
-- **Untouchable Core:** Protected processes (PID 1, sshd, journald, tailscaled, sentinel, wa-bridge) cannot be killed or modified.
-- **Safe Cache Dropping:** Global `vm.drop_caches` is prohibited; proactive per-cgroup `memory.reclaim` (Linux 5.19+) is used instead.
-- **Ephemeral Mutations:** No persistent edits to `/etc` or unit files; runtime properties (`--runtime`) only.
+# Run Sentinel daemon on Linux host with Tailscale + Bearer auth
+export FRANKEN_BEARER_TOKEN="replace-with-strong-secret"
+go run ./cmd/franken sentinel serve --tailscale --port 8090 --db franken-sentinel.db
 
----
+# Connect Kiro agents over stdio to a remote/local Sentinel Streamable HTTP server
+go run ./cmd/franken mcp connect sentinel@localhost --token-env FRANKEN_BEARER_TOKEN
+```
 
-## 📖 Documentation Index
+## Documentation
 
-- [Detailed Technical Blueprint (A–Z)](docs/BLUEPRINT.md)
-- [Business Logic & Incident Lifecycle](documentation.md)
-- [API & MCP Specification](documentation-api.md)
-- [Agent Steering Rules](.kiro/steering/rules.md)
-- [Incident Remediation Spec Requirements](.kiro/specs/server-incident-remediation/requirements.md)
+- [docs/BLUEPRINT.md](docs/BLUEPRINT.md) — End-to-end architecture, threat model, and demo specification
+- [documentation.md](documentation.md) — Entity lifecycles, state transitions, and business constraints (Bahasa Indonesia)
+- [documentation-api.md](documentation-api.md) — Sentinel HTTP, SSE, MCP tool, and CLI contracts (Bahasa Indonesia)
 
----
-
-## 📄 License
+## License
 
 This project is licensed under the [MIT License](LICENSE).

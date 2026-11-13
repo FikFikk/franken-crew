@@ -1,0 +1,17 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Executor & Approval Safety Guard",
+      "description": "Re-verify fixed-argv executor allowlist, Ed25519 signature verification, and L1 reflex rollback scheduler.",
+      "enabled": true,
+      "trigger": "PostFileSave",
+      "matcher": "internal/{executor,approval,reflex}/**",
+      "action": {
+        "type": "command",
+        "command": "go test -count=1 ./internal/executor/... ./internal/approval/... ./internal/reflex/..."
+      }
+    }
+  ]
+}
+

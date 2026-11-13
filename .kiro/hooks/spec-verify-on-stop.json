@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Full Go Verification on Turn Stop",
+      "description": "Run go vet and the full unit test suite whenever an agent turn completes.",
+      "enabled": true,
+      "trigger": "Stop",
+      "action": {
+        "type": "command",
+        "command": "go vet ./... && go test -count=1 ./..."
+      }
+    }
+  ]
+}
+

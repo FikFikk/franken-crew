@@ -1,6 +1,6 @@
 # FrankenCrew — Dokumentasi Logika Bisnis
 
-> Status: **Tahap 1–8 Diimplementasikan** (Kernel telemetry & probe, signal collectors 100%, detector TTO, SQLite incident store & audit, evidence redaction pipeline, policy engine, safe fixed-argv executor, Level 1 reflex engine + persistent TTL scheduler, Ed25519 approval key provisioning `franken keys init` & anti-replay token minter/verifier, serta Sentinel MCP Server via Streamable HTTP/SSE & JSON-RPC stdio). Sumber detail teknis: [docs/BLUEPRINT.md](docs/BLUEPRINT.md) dan [.kiro/specs/server-incident-remediation/](.kiro/specs/server-incident-remediation/).
+> Status: **Sentinel Core + Konfigurasi Kiro Selesai** (`internal/kernelfs`, `psi`, `cgroup`, `journal`, `detector`, `incident`, `redact`, `policy`, `executor`, `reflex`, `approval`, `mcpserver`, `sentinel` daemon `franken sentinel serve`, Kiro `.kiro/{steering,hooks,agents,settings/mcp.json}`, serta CLI `franken keys init`, `franken mcp serve|stdio|connect`, dan `franken guard --audit`). Sumber detail teknis: [docs/BLUEPRINT.md](docs/BLUEPRINT.md) dan [.kiro/specs/server-incident-remediation/](.kiro/specs/server-incident-remediation/).
 
 ## 1. Siklus Hidup Incident
 

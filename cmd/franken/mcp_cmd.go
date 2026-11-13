@@ -34,7 +34,7 @@ type mcpFlagsConfig struct {
 	nodeName   string
 }
 
-func runMCP(args []string, stdout, stderr io.Writer) int {
+func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		printMCPUsage(stderr)
 		return 2
@@ -45,6 +45,8 @@ func runMCP(args []string, stdout, stderr io.Writer) int {
 		return runMCPServe(args[1:], stdout, stderr)
 	case "stdio":
 		return runMCPStdio(args[1:], stderr)
+	case "connect":
+		return runMCPConnect(args[1:], stdin, stdout, stderr)
 	case "-h", "--help", "help":
 		printMCPUsage(stdout)
 		return 0
@@ -73,25 +75,8 @@ func runMCPServe(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	// Baca token bearer dari env var agar kredensial tidak terlihat pada daftar argumen `/proc/PID/cmdline`
-	bearerToken := strings.TrimSpace(os.Getenv(cfg.tokenEnv))
-	if bearerToken == "" {
-		fmt.Fprintf(stderr, "error: %s\n", mcpserver.ErrMissingBearerToken)
-		return 1
-	}
-
-	addr := cfg.listenAddr
-	if cfg.tailscale {
-		tsIP, err := mcpserver.FindTailscaleIP()
-		if err != nil {
-			fmt.Fprintf(stderr, "error detecting tailscale IP: %v\n", err)
-			return 1
-		}
-		addr = net.JoinHostPort(tsIP, fmt.Sprintf("%d", cfg.port))
-	}
-
-	if _, err := mcpserver.ValidateBindAddr(addr, false); err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+	addr, bearerToken, ok := resolveHTTPBind(cfg, stderr)
+	if !ok {
 		return 1
 	}
 
@@ -111,6 +96,31 @@ func runMCPServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func resolveHTTPBind(cfg mcpFlagsConfig, stderr io.Writer) (string, string, bool) {
+	// Baca token bearer dari env var agar kredensial tidak terlihat pada daftar argumen `/proc/PID/cmdline`
+	bearerToken := strings.TrimSpace(os.Getenv(cfg.tokenEnv))
+	if bearerToken == "" {
+		fmt.Fprintf(stderr, "error: %s\n", mcpserver.ErrMissingBearerToken)
+		return "", "", false
+	}
+
+	addr := cfg.listenAddr
+	if cfg.tailscale {
+		tsIP, err := mcpserver.FindTailscaleIP()
+		if err != nil {
+			fmt.Fprintf(stderr, "error detecting tailscale IP: %v\n", err)
+			return "", "", false
+		}
+		addr = net.JoinHostPort(tsIP, fmt.Sprintf("%d", cfg.port))
+	}
+
+	if _, err := mcpserver.ValidateBindAddr(addr, false); err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return "", "", false
+	}
+	return addr, bearerToken, true
 }
 
 func runMCPStdio(args []string, stderr io.Writer) int {
@@ -172,16 +182,36 @@ func buildMCPServer(cfg mcpFlagsConfig, bearerToken string) (*mcpserver.Server, 
 		return nil, nil, err
 	}
 
+	srv, _, err := buildMCPServerWithDeps(cfg, bearerToken, store, cat, execRunner, reflexEng, fsys)
+	if err != nil {
+		_ = store.Close()
+		return nil, nil, err
+	}
+
+	cleanup := func() {
+		_ = store.Close()
+	}
+	return srv, cleanup, nil
+}
+
+func buildMCPServerWithDeps(
+	cfg mcpFlagsConfig,
+	bearerToken string,
+	store *incident.Store,
+	cat *policy.Catalog,
+	execRunner *executor.Executor,
+	reflexEng *reflex.Engine,
+	fsys kernelfs.FS,
+) (*mcpserver.Server, func(), error) {
 	var verifier *approval.Verifier
 	if cfg.pubKeyPath != "" {
 		if pubKey, loadErr := loadOptionalPublicKey(cfg.pubKeyPath); loadErr == nil {
+			var err error
 			verifier, err = approval.NewVerifier(pubKey, store, nil)
 			if err != nil {
-				_ = store.Close()
 				return nil, nil, err
 			}
 		} else if !errors.Is(loadErr, os.ErrNotExist) {
-			_ = store.Close()
 			return nil, nil, loadErr
 		}
 	}
@@ -197,14 +227,10 @@ func buildMCPServer(cfg mcpFlagsConfig, bearerToken string) (*mcpserver.Server, 
 		BearerToken: bearerToken,
 	})
 	if err != nil {
-		_ = store.Close()
 		return nil, nil, err
 	}
 
-	cleanup := func() {
-		_ = store.Close()
-	}
-	return srv, cleanup, nil
+	return srv, func() {}, nil
 }
 
 func loadOptionalPublicKey(path string) (ed25519.PublicKey, error) {
@@ -217,4 +243,5 @@ func printMCPUsage(w io.Writer) {
 	fmt.Fprintln(w, "Subcommands:")
 	fmt.Fprintln(w, "  serve    Start Sentinel Streamable HTTP/SSE server bound to Tailscale or localhost")
 	fmt.Fprintln(w, "  stdio    Start Sentinel JSON-RPC stdio MCP transport")
+	fmt.Fprintln(w, "  connect  Relay stdio JSON-RPC to remote Streamable HTTP Sentinel server")
 }

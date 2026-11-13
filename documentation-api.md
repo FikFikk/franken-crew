@@ -1,6 +1,6 @@
 # FrankenCrew — Dokumentasi API
 
-> Status: **Tahap 1–8 Diimplementasikan** (telemetry kernel, signal collectors 100%, detector TTO, SQLite store & audit, policy validator, safe executor, L1 reflex engine & TTL rollback scheduler, Ed25519 key provisioning `franken keys init` & approval token protocol, serta Sentinel MCP Server `franken mcp serve` / `franken mcp stdio` dengan endpoint `/mcp`, `/v1/events`, `/healthz`). Proyek ini bukan Laravel — tidak ada `routes/web.php` / `app/Console/Kernel.php`; penjadwalan memakai Kiro Crew cron dan timer internal Go.
+> Status: **Sentinel Core + Konfigurasi Kiro Selesai** (`franken sentinel serve`, `franken mcp serve|stdio|connect`, `franken keys init`, `franken guard --audit`, endpoint `/mcp`, `/v1/events`, `/healthz`, dan seluruh modul `internal/*`). Proyek ini bukan Laravel — tidak ada `routes/web.php` / `app/Console/Kernel.php`; penjadwalan memakai Kiro Crew cron (rencana) dan timer internal Go (`1 Hz` sampler + TTL rollback scheduler).
 
 ## 1. Sentinel HTTP (hanya interface Tailscale)
 
@@ -52,6 +52,17 @@
 | `action_rollback` | L1 | `reflex_id` | status rollback | — |
 | `incident_transition` | L0 | `incident_id`, `to`, `reason` | state baru | Hanya transisi legal |
 | `verify_health` | L0 | `incident_id`, `window_s = 120` | `healthy`, detail cek | Sukses → rollback reflex otomatis |
+
+### 1.2 CLI `franken` (`cmd/franken`)
+
+| Command | Flag Utama | Fungsi | Exit Code / Catatan |
+|---|---|---|---|
+| `franken keys init` | `--dir`, `--force` | Generate pasangan kunci Ed25519 (`0600` private untuk `wa-bridge`, `0644` public untuk Sentinel) | `0` sukses · `1` kunci sudah ada tanpa `--force` |
+| `franken sentinel serve` | `--tailscale`, `--listen`, `--port`, `--db`, `--policy`, `--pub-key`, `--token-env`, `--cgroups`, `--journal-units` | Jalankan daemon terpadu Sentinel (capability probe + sampler 1 Hz + PSI/inotify + refleks TTL + HTTP/SSE MCP) | Fail-fast `1` jika tanpa cgroup v2 / PSI / Bearer token |
+| `franken mcp serve` | `--tailscale`, `--listen`, `--port`, `--db`, `--policy`, `--pub-key`, `--token-env` | Jalankan hanya HTTP/SSE MCP server Sentinel (`/mcp`, `/v1/events`, `/healthz`) | Menolak bind publik non-Tailscale (`0.0.0.0`) |
+| `franken mcp stdio` | `--db`, `--policy`, `--pub-key`, `--node` | Jalankan MCP Server langsung lewat JSON-RPC `stdin`/`stdout` | Untuk pengujian/akses lokal |
+| `franken mcp connect <target>` | `--token-env`, `--timeout`, `--allow-insecure-remote` | Proxy `stdin`/`stdout` JSON-RPC ke endpoint HTTP `/mcp` (`sentinel@host` / URL) dengan header `Bearer` & `Mcp-Session-Id` | Menolak HTTP polos non-privat/non-Tailscale |
+| `franken guard` | `--audit`, `--db`, `--policy`, `--payload` | Validator `PreToolUse` untuk memblokir `raw_shell`/L3, PID 1, unit terlindungi, dan L2 tanpa `approval_token` | `0` diizinkan · `2` diblokir (konvensi hook Kiro; jalankan binary terkompilasi `franken`, bukan `go run` yang membungkus exit code non-zero menjadi `1`) · menyimpan audit terredaksi |
 
 ## 2. wa-bridge
 

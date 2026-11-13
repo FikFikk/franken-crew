@@ -1,0 +1,31 @@
+{
+  "mcpServers": {
+    "franken-sentinel": {
+      "command": "go",
+      "args": [
+        "run",
+        "./cmd/franken",
+        "mcp",
+        "connect",
+        "sentinel@localhost",
+        "--token-env",
+        "FRANKEN_BEARER_TOKEN"
+      ],
+      "env": {
+        "FRANKEN_BEARER_TOKEN": "${FRANKEN_BEARER_TOKEN}"
+      },
+      "disabled": false,
+      "autoApprove": [
+        "node_snapshot",
+        "incident_list",
+        "incident_get",
+        "psi_history",
+        "cgroup_top",
+        "journal_tail",
+        "process_tree",
+        "zombie_report"
+      ]
+    }
+  }
+}
+

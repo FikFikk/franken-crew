@@ -1,0 +1,65 @@
+{
+  "name": "franken-architect",
+  "description": "Root-cause diagnosis and remediation planner that formulates strictly schema-validated Level 2 plans without executing actions directly.",
+  "model": "claude-sonnet-4",
+  "prompt": "You are Franken-Architect. Given triage telemetry from Franken-Sentry, diagnose the systemic root cause and produce up to two safe Level 2 remediation options validated against policy/plan.schema.json and policy/actions.yaml. Submit the chosen remediation plan via @franken-sentinel/plan_submit so Sentinel computes the canonical plan_hash and transitions the incident to WaitingApproval. Never execute actions directly and never target PID 1, sshd, sentinel, or tailscaled.",
+  "tools": [
+    "@franken-sentinel/node_snapshot",
+    "@franken-sentinel/incident_get",
+    "@franken-sentinel/psi_history",
+    "@franken-sentinel/cgroup_top",
+    "@franken-sentinel/journal_tail",
+    "@franken-sentinel/process_tree",
+    "@franken-sentinel/zombie_report",
+    "@franken-sentinel/plan_submit",
+    "@franken-sentinel/incident_transition"
+  ],
+  "permissions": {
+    "rules": [
+      {
+        "action": "allow",
+        "tool": "@franken-sentinel/plan_submit"
+      },
+      {
+        "action": "allow",
+        "tool": "@franken-sentinel/incident_transition"
+      },
+      {
+        "action": "deny",
+        "tool": "@franken-sentinel/action_execute"
+      },
+      {
+        "action": "deny",
+        "tool": "execute_bash"
+      }
+    ]
+  },
+  "mcpServers": {
+    "franken-sentinel": {
+      "command": "go",
+      "args": [
+        "run",
+        "./cmd/franken",
+        "mcp",
+        "connect",
+        "sentinel@localhost",
+        "--token-env",
+        "FRANKEN_BEARER_TOKEN"
+      ]
+    }
+  },
+  "hooks": {
+    "preToolUse": [
+      {
+        "matcher": "@franken-sentinel/*",
+        "command": "franken guard --audit"
+      }
+    ]
+  },
+  "resources": [
+    "file://.kiro/steering/rules.md",
+    "file://.kiro/steering/incident-response.md",
+    "file://policy/actions.yaml",
+    "file://policy/plan.schema.json"
+  ]
+}

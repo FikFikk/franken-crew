@@ -15,6 +15,10 @@ func main() {
 
 // run mengeksekusi router subcommand CLI `franken` dan mengembalikan exit code POSIX.
 func run(args []string, stdout, stderr io.Writer) int {
+	return runWithInput(args, os.Stdin, stdout, stderr)
+}
+
+func runWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		printRootUsage(stderr)
 		return 2
@@ -24,7 +28,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "keys":
 		return runKeys(args[1:], stdout, stderr)
 	case "mcp":
-		return runMCP(args[1:], stdout, stderr)
+		return runMCP(args[1:], stdin, stdout, stderr)
+	case "guard":
+		return runGuard(args[1:], stdin, stdout, stderr)
+	case "sentinel":
+		return runSentinel(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
 		printRootUsage(stdout)
 		return 0
@@ -87,8 +95,10 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: franken <command> [options]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Commands:")
-	fmt.Fprintln(w, "  keys    Manage Ed25519 approval keys")
-	fmt.Fprintln(w, "  mcp     Run Sentinel MCP server (serve HTTP/SSE or stdio JSON-RPC)")
+	fmt.Fprintln(w, "  keys      Manage Ed25519 approval keys")
+	fmt.Fprintln(w, "  mcp       Run Sentinel MCP server or stdio-to-HTTP connector")
+	fmt.Fprintln(w, "  sentinel  Run unified Sentinel daemon (probe + telemetry + reflex + MCP/SSE)")
+	fmt.Fprintln(w, "  guard     PreToolUse policy & protected-target validator for Kiro hooks")
 }
 
 func printKeysUsage(w io.Writer) {
