@@ -295,6 +295,15 @@ func renderMarkdown(
 		b.WriteString("No evidence snapshots were persisted.\n\n")
 	} else {
 		for _, ev := range evidences {
+			// Seri telemetri berisi ratusan titik numerik: tampilkan ringkasannya, bukan angka mentah
+			if ev.Kind == incident.EvidenceKindTelemetrySeries {
+				if summary, ok := summarizeTelemetrySeries(ev.RedactedData); ok {
+					b.WriteString(fmt.Sprintf("### `%s` (`%s`, captured %s)\n\n", ev.ID, sanitizeSingleLine(ev.Kind), ev.CapturedAt.UTC().Format(time.RFC3339)))
+					b.WriteString(summary)
+					b.WriteString("\n")
+					continue
+				}
+			}
 			// Gunakan hanya RedactedData dan jalankan redaksi ulang sebagai pertahanan berlapis
 			safeBody := redact.String(strings.TrimSpace(ev.RedactedData))
 			if safeBody == "" {
@@ -393,4 +402,41 @@ func sanitizeTableCell(s string) string {
 		return "—"
 	}
 	return clean
+}
+
+// summarizeTelemetrySeries meringkas evidence telemetry_series menjadi poin markdown (rentang, puncak memori
+// terhadap batas, puncak PSI, dan sampel terakhir). Payload yang tidak valid mengembalikan false agar
+// pemanggil menampilkan teks tersensor apa adanya.
+func summarizeTelemetrySeries(raw string) (string, bool) {
+	var ts incident.TelemetrySeries
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &ts); err != nil || len(ts.Points) == 0 {
+		return "", false
+	}
+	first, last := ts.Points[0], ts.Points[len(ts.Points)-1]
+	var peakKiB, peakSome, peakFull int64
+	for _, p := range ts.Points {
+		peakKiB = max(peakKiB, p[1])
+		peakSome = max(peakSome, p[2])
+		peakFull = max(peakFull, p[3])
+	}
+	mib := func(kib int64) float64 { return float64(kib) / 1024 }
+	offset := func(ms int64) string {
+		if ms < 0 {
+			return fmt.Sprintf("T-%ds", -ms/1000)
+		}
+		return fmt.Sprintf("T+%ds", ms/1000)
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("- **Samples:** %d samples from %s to %s (T = incident opened)\n", len(ts.Points), offset(first[0]), offset(last[0])))
+	if ts.LimitBytes > 0 {
+		limitMiB := float64(ts.LimitBytes) / (1 << 20)
+		b.WriteString(fmt.Sprintf("- **Peak memory:** %.1f MiB of %.1f MiB (%.0f%%)\n", mib(peakKiB), limitMiB, mib(peakKiB)/limitMiB*100))
+	} else {
+		b.WriteString(fmt.Sprintf("- **Peak memory:** %.1f MiB\n", mib(peakKiB)))
+	}
+	b.WriteString(fmt.Sprintf("- **Peak PSI:** some avg10 %.1f%%, full avg10 %.1f%%\n", float64(peakSome)/100, float64(peakFull)/100))
+	b.WriteString(fmt.Sprintf("- **Last sample:** %.1f MiB, PSI some avg10 %.1f%%\n", mib(last[1]), float64(last[2])/100))
+	b.WriteString("- The full series is available in the incident replay (`franken lab export`).\n")
+	return b.String(), true
 }

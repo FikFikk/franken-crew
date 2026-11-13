@@ -13,22 +13,17 @@ import (
 )
 
 const (
-	// TelemetrySeriesKind adalah jenis evidence snapshot seri telemetri insiden.
-	TelemetrySeriesKind = "telemetry_series"
+	// TelemetrySeriesKind adalah jenis evidence snapshot seri telemetri insiden (alias dari kosakata incident).
+	TelemetrySeriesKind = incident.EvidenceKindTelemetrySeries
 	// MaxTelemetrySeriesPoints membatasi jumlah titik seri setelah downsampling merata.
 	MaxTelemetrySeriesPoints = 400
 	// telemetrySeriesLookback menyertakan 180 detik sebelum insiden dibuka agar kurva pra-insiden terlihat.
 	telemetrySeriesLookback = 180 * time.Second
 )
 
-// TelemetrySeries adalah payload JSON evidence telemetry_series. Evidence melewati redact.String, dan pola
-// telepon/IP di sana dapat merusak angka panjang atau bertitik, sehingga setiap angka disimpan sebagai integer:
-// Points berisi [t_ms relatif opened_at, memory_kib, psi_some_x100, psi_full_x100] terurut menaik.
-type TelemetrySeries struct {
-	Cgroup     string     `json:"cgroup"`
-	LimitBytes uint64     `json:"limit_bytes"`
-	Points     [][4]int64 `json:"points"`
-}
+// TelemetrySeries adalah payload JSON evidence telemetry_series; definisinya berada di paket incident agar
+// postmortem dan lab dapat membacanya tanpa siklus impor.
+type TelemetrySeries = incident.TelemetrySeries
 
 // SnapshotTelemetrySeries menyimpan satu evidence telemetry_series untuk insiden dari ring PSI cgroup insiden
 // pada rentang [opened_at - 180 s, sekarang], di-downsample merata ke <= 400 titik. Snapshot hanya ditulis sekali:
