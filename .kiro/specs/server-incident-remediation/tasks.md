@@ -5,12 +5,12 @@
   - [x] 1.2 Capability probe: cgroup v2 mounted, PSI available, `memory.reclaim` present; refuse start with hint if PSI missing
   - _Requirements: 1.4, 12.1_
 
-- [ ] 2. Signal collectors
+- [x] 2. Signal collectors
   - [x] 2.1 PSI trigger watcher (`some 150000 1000000`) with `poll(POLLPRI)` and POLLERR re-discovery
-  - [ ] 2.2 inotify watcher for `memory.events` with delta computation
-  - [ ] 2.3 1 Hz sampler for `memory.current`, `memory.stat`, PSI `avg10`
-  - [ ] 2.4 Journal stream via `journalctl --follow --output=json`, pattern set (OOM, ENOMEM, heap out of memory, PM2 restart loop)
-  - [ ] 2.5 Zombie scanner grouping `/proc/*/stat` state `Z` by PPID
+  - [x] 2.2 inotify watcher for `memory.events` with delta computation
+  - [x] 2.3 1 Hz sampler for `memory.current`, `memory.stat`, PSI `avg10`
+  - [x] 2.4 Journal stream via `journalctl --follow --output=json`, pattern set (OOM, ENOMEM, heap out of memory, PM2 restart loop)
+  - [x] 2.5 Zombie scanner grouping `/proc/*/stat` state `Z` by PPID
   - _Requirements: 1.1, 1.2, 1.3_
 
 - [x] 3. Detector
