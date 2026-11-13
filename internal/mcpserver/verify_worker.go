@@ -208,6 +208,9 @@ func (s *Server) finalizeForwardVerification(ctx context.Context, st *verifyStat
 	if err != nil {
 		return VerifyHealthOutput{}, err
 	}
+	if spec.autoTransition {
+		inc = s.ensureVerifying(ctx, inc)
+	}
 
 	sampler := cgroup.NewSampler(s.cfg.FS, 1*time.Second)
 	sample, err := sampler.SampleCgroup(spec.absCgDir)
@@ -603,6 +606,27 @@ func (s *Server) memoryLimitFor(sample cgroup.Sample) uint64 {
 		return 0
 	}
 	return total - hostMemReserveBytes
+}
+
+// ensureVerifying memindahkan insiden yang baru diremediasi (REMEDIATING) ke VERIFYING saat jendela observasi
+// dimulai, karena state machine hanya mengizinkan RESOLVED dari VERIFYING.
+func (s *Server) ensureVerifying(ctx context.Context, inc *incident.Incident) *incident.Incident {
+	if inc.State == incident.StateVerifying || isTerminalState(inc.State) || !incident.CanTransition(inc.State, incident.StateVerifying) {
+		return inc
+	}
+	if err := s.cfg.Store.TransitionState(ctx, inc.ID, incident.StateVerifying, "sentinel", "forward health verification window started"); err != nil {
+		return inc
+	}
+	updated := *inc
+	updated.State = incident.StateVerifying
+	s.broker.Publish(StreamEvent{
+		Type:       "incident.updated",
+		IncidentID: inc.ID,
+		Severity:   inc.Severity,
+		State:      string(incident.StateVerifying),
+		Summary:    "Forward health verification window started",
+	})
+	return &updated
 }
 
 // truncateReasons membatasi jumlah dan panjang alasan kegagalan yang ikut dikirim lewat SSE.

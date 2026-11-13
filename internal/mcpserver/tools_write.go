@@ -891,6 +891,10 @@ func (s *Server) handleVerifyHealth(ctx context.Context, _ *mcp.CallToolRequest,
 	if err != nil {
 		return nil, VerifyHealthOutput{}, err
 	}
+	if in.AutoTransition {
+		// Tandai insiden sedang diverifikasi agar transisi akhir REMEDIATING -> VERIFYING -> RESOLVED sah
+		inc = s.ensureVerifying(ctx, inc)
+	}
 
 	cgTarget := strings.TrimSpace(in.Cgroup)
 	if cgTarget == "" {

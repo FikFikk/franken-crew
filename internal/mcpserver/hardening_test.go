@@ -431,3 +431,45 @@ func toolErrorText(res *mcp.CallToolResult) string {
 	}
 	return b.String()
 }
+
+// Alur nyata: action_execute meninggalkan insiden di REMEDIATING. Verifikasi forward wajib memindahkannya
+// ke VERIFYING lalu RESOLVED; sebelumnya REMEDIATING -> RESOLVED ditolak state machine sehingga insiden menggantung.
+func TestVerifyHealth_AfterL2ExecutionResolvesIncident(t *testing.T) {
+	h := setupTestMCPHarness(t)
+	defer h.srv.Close()
+	h.srv.cfg.PostmortemDir = filepath.Join(t.TempDir(), "incidents")
+	h.srv.cfg.AutoPostmortem = true
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, cleanup := connectPipeMCPClient(t, ctx, h.srv)
+	defer cleanup()
+
+	incID := "INC-20261113-1700-pi01"
+	ev := newScopedIncident(t, h, incID, scopedCgroup)
+	planOut := callPlanSubmit(t, ctx, session, incID, singleStepPlan(incID, "unit_restart", map[string]any{"unit": "haunted-api.service"}, ev))
+	if !planOut.Valid {
+		t.Fatalf("plan rejected: %v", planOut.Violations)
+	}
+	tok, _, err := h.minter.Mint(approval.MintRequest{
+		IncidentID: incID, PlanHash: planOut.PlanHash, OptionID: "A",
+		ActionName: "unit_restart", StepIDs: []string{"s1"}, ApproverSender: "+6281234567890",
+	})
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	execRes, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "action_execute", Arguments: map[string]any{
+		"incident_id": incID, "step_id": "s1", "action": "unit_restart",
+		"params": map[string]any{"unit": "haunted-api.service"}, "approval_token": tok,
+	}})
+	if err != nil || execRes.IsError {
+		t.Fatalf("action_execute failed: err=%v text=%q", err, toolErrorText(execRes))
+	}
+
+	out := runForwardVerification(t, ctx, h, session, incID, scopedCgroup, linearMiB(180, 182, 9))
+	if out.State != string(incident.StateResolved) || !out.Healthy {
+		t.Fatalf("expected the executed incident to end RESOLVED, got state=%s healthy=%v failures=%v", out.State, out.Healthy, out.FailureReasons)
+	}
+	if _, err := os.Stat(filepath.Join(h.srv.cfg.PostmortemDir, incID, "postmortem.md")); err != nil {
+		t.Fatalf("expected a postmortem for the resolved incident: %v", err)
+	}
+}
