@@ -157,4 +157,3 @@ func (b *Bridge) handleWASendReport(ctx context.Context, _ *mcp.CallToolRequest,
 		SentAt:    b.cfg.Clock().UTC().Format(time.RFC3339),
 	}, nil
 }
-

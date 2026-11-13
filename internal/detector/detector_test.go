@@ -272,4 +272,3 @@ func TestDetector_HostLimitFallbackWhenMemoryMaxUnset(t *testing.T) {
 		t.Errorf("expected fallback host limit %d, got %d", expectedLimit, eval.LimitBytes)
 	}
 }
-

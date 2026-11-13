@@ -250,4 +250,3 @@ func TestWatcher_POLLERR_RediscoversCgroup(t *testing.T) {
 		t.Fatalf("timed out waiting for event after POLLERR rediscovery")
 	}
 }
-

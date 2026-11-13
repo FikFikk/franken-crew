@@ -80,4 +80,3 @@ func (p *linuxInotifyPoller) Watch(ctx context.Context, targetPath string, onCha
 		}
 	}
 }
-

@@ -1170,4 +1170,3 @@ func TestProperty_VoteToTokenExactBinding(t *testing.T) {
 		}
 	})
 }
-

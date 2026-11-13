@@ -126,4 +126,3 @@ func BenchmarkSentinelEvalAndReflexFootprint(b *testing.B) {
 		}
 	}
 }
-

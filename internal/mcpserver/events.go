@@ -234,4 +234,3 @@ func writeSSEFrame(w http.ResponseWriter, ev StreamEvent) error {
 	}
 	return nil
 }
-

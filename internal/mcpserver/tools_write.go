@@ -126,27 +126,27 @@ type VerifyHealthInput struct {
 
 // HealthChecksDetail merinci hasil setiap aspek pemeriksaan kesehatan PSI & stabilitas RAM.
 type HealthChecksDetail struct {
-	PSISomeAvg10       float64 `json:"psi_some_avg10"`
-	PSIFullAvg10       float64 `json:"psi_full_avg10"`
-	PSIStable          bool    `json:"psi_stable"`
-	MemoryCurrent      uint64  `json:"memory_current_bytes"`
-	MemoryMinBytes     uint64  `json:"memory_min_bytes,omitempty"`
-	MemoryPeakBytes    uint64  `json:"memory_peak_bytes,omitempty"`
-	MemoryStartBytes   uint64  `json:"memory_start_bytes,omitempty"`
-	MemoryEndBytes     uint64  `json:"memory_end_bytes,omitempty"`
-	MemoryGrowthPct    float64 `json:"memory_growth_pct,omitempty"`
+	PSISomeAvg10     float64 `json:"psi_some_avg10"`
+	PSIFullAvg10     float64 `json:"psi_full_avg10"`
+	PSIStable        bool    `json:"psi_stable"`
+	MemoryCurrent    uint64  `json:"memory_current_bytes"`
+	MemoryMinBytes   uint64  `json:"memory_min_bytes,omitempty"`
+	MemoryPeakBytes  uint64  `json:"memory_peak_bytes,omitempty"`
+	MemoryStartBytes uint64  `json:"memory_start_bytes,omitempty"`
+	MemoryEndBytes   uint64  `json:"memory_end_bytes,omitempty"`
+	MemoryGrowthPct  float64 `json:"memory_growth_pct,omitempty"`
 	// Tren memori jendela forward: kemiringan regresi linear, sisa ruang ke batas, dan proyeksi TTO
 	MemorySlopeBytesPerSec float64  `json:"memory_slope_bytes_per_sec"`
 	MemoryHeadroomBytes    uint64   `json:"memory_headroom_bytes,omitempty"`
 	MemoryTTOSeconds       *float64 `json:"memory_tto_seconds,omitempty"`
-	MemoryStable       bool    `json:"memory_stable"`
-	OOMKillCount       uint64  `json:"oom_kill_count"`
-	WindowSamples      int     `json:"window_samples_checked"`
-	WindowSpanSeconds  int64   `json:"window_span_seconds"`
-	UnitChecked        string  `json:"unit_checked,omitempty"`
-	UnitActive         *bool   `json:"unit_active,omitempty"`
-	ProbeURLChecked    string  `json:"probe_url_checked,omitempty"`
-	ProbeStatusCode    int     `json:"probe_status_code,omitempty"`
+	MemoryStable           bool     `json:"memory_stable"`
+	OOMKillCount           uint64   `json:"oom_kill_count"`
+	WindowSamples          int      `json:"window_samples_checked"`
+	WindowSpanSeconds      int64    `json:"window_span_seconds"`
+	UnitChecked            string   `json:"unit_checked,omitempty"`
+	UnitActive             *bool    `json:"unit_active,omitempty"`
+	ProbeURLChecked        string   `json:"probe_url_checked,omitempty"`
+	ProbeStatusCode        int      `json:"probe_status_code,omitempty"`
 }
 
 // VerifyHealthOutput melaporkan kesimpulan kelulusan evaluasi kesehatan dan jumlah refleks yang di-rollback.
@@ -1364,4 +1364,3 @@ func parseMemorySizeParam(raw any) (uint64, bool) {
 		return 0, false
 	}
 }
-

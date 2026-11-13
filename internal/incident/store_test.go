@@ -345,4 +345,3 @@ func TestStore_TransitionState_AtomicConcurrency(t *testing.T) {
 		t.Fatalf("expected ErrInvalidTransition after terminal commit, got %v", err)
 	}
 }
-

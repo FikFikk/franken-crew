@@ -273,14 +273,14 @@ func (p *LoopbackHTTPProber) Probe(ctx context.Context, rawURL string) (int, err
 
 // CgroupMemoryStat merepresentasikan ringkasan penggunaan memori dan PSI satu cgroup.
 type CgroupMemoryStat struct {
-	Cgroup         string  `json:"cgroup"`
-	MemoryCurrent  uint64  `json:"memory_current_bytes"`
-	MemoryMax      uint64  `json:"memory_max_bytes"`
-	MemoryHigh     uint64  `json:"memory_high_bytes"`
-	PSISomeAvg10   float64 `json:"psi_some_avg10"`
-	PSIFullAvg10   float64 `json:"psi_full_avg10"`
-	OOMCount       uint64  `json:"oom_count"`
-	OOMKillCount   uint64  `json:"oom_kill_count"`
+	Cgroup        string  `json:"cgroup"`
+	MemoryCurrent uint64  `json:"memory_current_bytes"`
+	MemoryMax     uint64  `json:"memory_max_bytes"`
+	MemoryHigh    uint64  `json:"memory_high_bytes"`
+	PSISomeAvg10  float64 `json:"psi_some_avg10"`
+	PSIFullAvg10  float64 `json:"psi_full_avg10"`
+	OOMCount      uint64  `json:"oom_count"`
+	OOMKillCount  uint64  `json:"oom_kill_count"`
 }
 
 // ProcessNode merepresentasikan informasi satu proses dalam hierarki cgroup yang sudah disensor.
@@ -527,4 +527,3 @@ func readProcVmRSS(fsys kernelfs.FS, procRoot, pidStr string) uint64 {
 	}
 	return 0
 }
-

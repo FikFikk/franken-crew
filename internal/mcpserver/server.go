@@ -284,4 +284,3 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(resp)
 }
-

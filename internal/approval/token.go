@@ -314,4 +314,3 @@ func generateNonce() (string, error) {
 	}
 	return hex.EncodeToString(raw[:]), nil
 }
-

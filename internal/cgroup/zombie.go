@@ -20,10 +20,10 @@ type ProcessStat struct {
 
 // ZombieGroup mengelompokkan anak proses zombie (state Z) berdasarkan Parent PID (PPID).
 type ZombieGroup struct {
-	ParentPID  int      `json:"parent_pid"`
-	ParentComm string   `json:"parent_comm"`
-	ChildPIDs  []int    `json:"child_pids"`
-	Count      int      `json:"count"`
+	ParentPID  int    `json:"parent_pid"`
+	ParentComm string `json:"parent_comm"`
+	ChildPIDs  []int  `json:"child_pids"`
+	Count      int    `json:"count"`
 }
 
 // ZombieReport merepresentasikan laporan komprehensif temuan proses zombie di sistem.
@@ -153,4 +153,3 @@ func ScanZombies(fsys kernelfs.FS, procRoot string) (ZombieReport, error) {
 		ScannedAt:    time.Now(),
 	}, nil
 }
-

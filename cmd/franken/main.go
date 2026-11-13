@@ -116,4 +116,3 @@ func printKeysUsage(w io.Writer) {
 	fmt.Fprintln(w, "Subcommands:")
 	fmt.Fprintln(w, "  init    Generate Ed25519 keypair (0600 private key for wa-bridge, 0644 public key for sentinel)")
 }
-

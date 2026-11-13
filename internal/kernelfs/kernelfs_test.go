@@ -145,4 +145,3 @@ func TestReadHelpers_Uint64AndKeyValueAndMemTotal(t *testing.T) {
 		t.Errorf("expected ErrNotExist after Remove, got %v", err)
 	}
 }
-

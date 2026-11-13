@@ -281,4 +281,3 @@ func TestKiroConfigurations_ValidJSONAndNoRawShell(t *testing.T) {
 		}
 	}
 }
-

@@ -347,4 +347,3 @@ func (c *SentinelClient) IncidentTransition(ctx context.Context, in mcpserver.In
 	}
 	return &out, nil
 }
-

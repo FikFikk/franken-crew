@@ -371,4 +371,3 @@ func isHalfThresholdHealthy(
 	}
 	return true
 }
-

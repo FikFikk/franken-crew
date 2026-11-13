@@ -216,4 +216,3 @@ func TestWABridge_MCPStdioProxy_SingleOwnerHTTP(t *testing.T) {
 		t.Fatalf("expected single-owner serve messenger to receive proxied notification, got %+v", messenger.sentTexts)
 	}
 }
-

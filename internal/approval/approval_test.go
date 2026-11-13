@@ -433,4 +433,3 @@ func TestApproval_Property_P2_TokenForPlanXNeverAuthorizesPlanY(t *testing.T) {
 		}
 	})
 }
-

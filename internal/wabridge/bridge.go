@@ -88,20 +88,20 @@ type PollOptionBinding struct {
 
 // ApprovalDecision menyimpan hasil akhir interaksi operator manusia pada poll atau teks fallback.
 type ApprovalDecision struct {
-	ApprovalID  string    `json:"approval_id"`
-	IncidentID  string    `json:"incident_id"`
-	Status      string    `json:"status"` // GRANTED, ROLLED_BACK, DENIED, EXPIRED
-	OptionID    string    `json:"option_id,omitempty"`
-	ChoiceLabel string    `json:"choice_label,omitempty"`
-	Token       string    `json:"token,omitempty"`
-	Approver    string    `json:"approver,omitempty"`
-	PlanHash    string    `json:"plan_hash,omitempty"`
-	Action      string    `json:"action,omitempty"`
-	StepIDs     []string  `json:"step_ids,omitempty"`
+	ApprovalID  string   `json:"approval_id"`
+	IncidentID  string   `json:"incident_id"`
+	Status      string   `json:"status"` // GRANTED, ROLLED_BACK, DENIED, EXPIRED
+	OptionID    string   `json:"option_id,omitempty"`
+	ChoiceLabel string   `json:"choice_label,omitempty"`
+	Token       string   `json:"token,omitempty"`
+	Approver    string   `json:"approver,omitempty"`
+	PlanHash    string   `json:"plan_hash,omitempty"`
+	Action      string   `json:"action,omitempty"`
+	StepIDs     []string `json:"step_ids,omitempty"`
 	// StepTokens berisi satu token per langkah sesuai urutan plan; Token di atas sama dengan token langkah pertama
 	StepTokens []StepToken `json:"step_tokens,omitempty"`
 	ResultMsg  string      `json:"result_msg,omitempty"`
-	DecidedAt   time.Time `json:"decided_at"`
+	DecidedAt  time.Time   `json:"decided_at"`
 }
 
 // PendingPoll merepresentasikan poll persetujuan yang sedang menunggu jawaban admin.
@@ -1405,4 +1405,3 @@ func randomShortCode() string {
 	_, _ = rand.Read(b[:])
 	return strings.ToUpper(hex.EncodeToString(b[:]))
 }
-

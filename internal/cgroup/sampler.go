@@ -127,4 +127,3 @@ func (s *Sampler) Start(ctx context.Context, cgroupPaths []string, out chan<- Sa
 		}
 	}
 }
-

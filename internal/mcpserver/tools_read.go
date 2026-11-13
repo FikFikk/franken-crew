@@ -85,10 +85,10 @@ type RedactedEvidenceView struct {
 type IncidentGetOutput struct {
 	Incident incident.Incident `json:"incident"`
 	// PlanHash adalah hash SHA-256 kanonik dari plan tersimpan (dihitung sebelum redaksi) untuk wa_request_approval
-	PlanHash   string                 `json:"plan_hash,omitempty"`
-	Evidence   []RedactedEvidenceView `json:"evidence"`
+	PlanHash   string                  `json:"plan_hash,omitempty"`
+	Evidence   []RedactedEvidenceView  `json:"evidence"`
 	Reflexes   []incident.ReflexAction `json:"reflexes"`
-	AuditTrail []incident.AuditEntry  `json:"audit_trail"`
+	AuditTrail []incident.AuditEntry   `json:"audit_trail"`
 }
 
 // IncidentClaimInput memuat parameter untuk klaim atomik insiden.
@@ -544,4 +544,3 @@ func newEvidenceID() string {
 	_, _ = rand.Read(b[:])
 	return "ev-" + hex.EncodeToString(b[:])
 }
-

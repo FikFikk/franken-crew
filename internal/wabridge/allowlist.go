@@ -112,4 +112,3 @@ func normalizeDigits(s string) string {
 	}
 	return b.String()
 }
-

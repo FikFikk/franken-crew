@@ -218,4 +218,3 @@ func (d *FSAdmissionDriver) ReadState(_ context.Context, app string) (string, er
 	}
 	return string(data), nil
 }
-

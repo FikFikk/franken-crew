@@ -38,12 +38,12 @@ const (
 
 // ActionDef merepresentasikan definisi aksi pada katalog policy/actions.yaml
 type ActionDef struct {
-	Name          string               `yaml:"name" json:"name"`
-	Tier          Tier                 `yaml:"tier" json:"tier"`
-	Description   string               `yaml:"description" json:"description"`
-	Params        map[string]ParamDef  `yaml:"params,omitempty" json:"params,omitempty"`
-	MaxReclaimPct float64              `yaml:"max_reclaim_pct,omitempty" json:"max_reclaim_pct,omitempty"`
-	MaxTTLSeconds int                  `yaml:"max_ttl_seconds,omitempty" json:"max_ttl_seconds,omitempty"`
+	Name          string              `yaml:"name" json:"name"`
+	Tier          Tier                `yaml:"tier" json:"tier"`
+	Description   string              `yaml:"description" json:"description"`
+	Params        map[string]ParamDef `yaml:"params,omitempty" json:"params,omitempty"`
+	MaxReclaimPct float64             `yaml:"max_reclaim_pct,omitempty" json:"max_reclaim_pct,omitempty"`
+	MaxTTLSeconds int                 `yaml:"max_ttl_seconds,omitempty" json:"max_ttl_seconds,omitempty"`
 }
 
 // ParamDef mendefinisikan tipe dan keharusan parameter aksi
@@ -54,10 +54,10 @@ type ParamDef struct {
 
 // Catalog menyimpan seluruh definisi kebijakan keamanan aksi dan unit yang dilindungi
 type Catalog struct {
-	Version        string               `yaml:"version"`
-	ProtectedUnits []string             `yaml:"protected_units"`
-	ProtectedPIDs  []int                `yaml:"protected_pids"`
-	Actions        []ActionDef          `yaml:"actions"`
+	Version        string      `yaml:"version"`
+	ProtectedUnits []string    `yaml:"protected_units"`
+	ProtectedPIDs  []int       `yaml:"protected_pids"`
+	Actions        []ActionDef `yaml:"actions"`
 	actionMap      map[string]ActionDef
 	unitMap        map[string]bool
 	pidMap         map[int]bool
@@ -98,10 +98,10 @@ type StepValidation struct {
 
 // ValidationResult merepresentasikan ringkasan hasil validasi rencana mitigasi
 type ValidationResult struct {
-	PlanHash string           `json:"plan_hash"`
-	Valid    bool             `json:"valid"`
-	Violations []string       `json:"violations,omitempty"`
-	Steps    []StepValidation `json:"steps"`
+	PlanHash   string           `json:"plan_hash"`
+	Valid      bool             `json:"valid"`
+	Violations []string         `json:"violations,omitempty"`
+	Steps      []StepValidation `json:"steps"`
 }
 
 // LoadCatalog membaca berkas konfigurasi YAML katalog kebijakan
@@ -508,4 +508,3 @@ func ComputePlanHash(plan *Plan) (string, error) {
 	sum := sha256.Sum256(canonicalBytes)
 	return hex.EncodeToString(sum[:]), nil
 }
-

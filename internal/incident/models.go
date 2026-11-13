@@ -33,17 +33,17 @@ var (
 
 // Incident merepresentasikan entitas insiden utama di database.
 type Incident struct {
-	ID          string     `json:"id"`
-	Node        string     `json:"node"`
-	Cgroup      string     `json:"cgroup"`
-	Severity    string     `json:"severity"`
-	State       State      `json:"state"`
-	TTOSeconds  *float64   `json:"tto_seconds,omitempty"`
-	OpenedAt    time.Time  `json:"opened_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	ClosedAt    *time.Time `json:"closed_at,omitempty"`
-	TriageJSON  string     `json:"triage_json,omitempty"`
-	PlanJSON    string     `json:"plan_json,omitempty"`
+	ID         string     `json:"id"`
+	Node       string     `json:"node"`
+	Cgroup     string     `json:"cgroup"`
+	Severity   string     `json:"severity"`
+	State      State      `json:"state"`
+	TTOSeconds *float64   `json:"tto_seconds,omitempty"`
+	OpenedAt   time.Time  `json:"opened_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	ClosedAt   *time.Time `json:"closed_at,omitempty"`
+	TriageJSON string     `json:"triage_json,omitempty"`
+	PlanJSON   string     `json:"plan_json,omitempty"`
 }
 
 // EvidenceSnapshot merepresentasikan rekaman bukti telemetri yang telah disensor.
@@ -143,4 +143,3 @@ func CanTransition(from, to State) bool {
 	}
 	return false
 }
-
