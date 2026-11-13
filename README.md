@@ -2,10 +2,10 @@
 
 **FrankenCrew** is a Two-Speed autonomous Linux server self-healing sentinel paired with **Kiro CLI Crew** and human-in-the-loop WhatsApp approvals.
 
-> **Status (Sentinel Core + Kiro Configuration Complete)**
-> - **Implemented & Tested (Go 1.25+, pure-Go static binary `CGO_ENABLED=0`):** Kernel telemetry (`kernelfs`, `psi`, `cgroup`, `journal`), EWMA Time-To-OOM `detector`, SQLite WAL `incident` store & `redact` pipeline, single-source `policy` & fixed-argv `executor`, L1 TTL `reflex` engine, Ed25519 `approval` protocol, Streamable HTTP/SSE & stdio `mcpserver`, unified `sentinel` daemon, and the `franken` CLI (`keys init`, `sentinel serve`, `mcp serve|stdio|connect`, `guard`).
+> **Status (Sentinel Core + Headless WhatsApp Bridge + Kiro Configuration Complete)**
+> - **Implemented & Tested (Go 1.26+, pure-Go static binary `CGO_ENABLED=0`):** Kernel telemetry (`kernelfs`, `psi`, `cgroup`, `journal`), EWMA Time-To-OOM `detector`, SQLite WAL `incident` store & `redact` pipeline, single-source `policy` & fixed-argv `executor`, L1 TTL `reflex` engine, Ed25519 `approval` protocol, Streamable HTTP/SSE & stdio `mcpserver`, unified `sentinel` daemon, headless `whatsmeow` bridge (`internal/wabridge` + `cmd/wa-bridge` with SSE loop, `< 2 s` alert, Native Poll + text-code fallback, allowlist + LID resolution, Ed25519 minter, `15s x 3` heartbeat watcher, MCP stdio tools), and the `franken` CLI (`keys init`, `sentinel serve`, `mcp serve|stdio|connect`, `wa-login`, `guard`).
 > - **Implemented Kiro Customization Stack (`.kiro/`):** Spec-driven development specs, multi-mode steering documents, 5 deterministic `v1` hooks (including `PreToolUse` blocking via `franken guard --audit`), 3 MCP-only specialized agents (`franken-sentry`, `franken-architect`, `franken-remediator`), and `.kiro/settings/mcp.json`.
-> - **Planned Next Milestones:** `wa-bridge` (WhatsApp poll/approval signer using `whatsmeow`) and the read-only **Haunted Lab** observability web dashboard.
+> - **Planned Next Milestones:** Read-only **Haunted Lab** observability web dashboard and standalone Kiro Crew application packaging.
 
 ## Two-Speed Self-Healing Architecture
 
@@ -22,7 +22,8 @@
 ## Repository Layout
 
 ```text
-cmd/franken/                  # Unified CLI (`keys init`, `sentinel serve`, `mcp serve|stdio|connect`, `guard`)
+cmd/franken/                  # Unified CLI (`keys init`, `sentinel serve`, `mcp serve|stdio|connect`, `wa-login`, `guard`)
+cmd/wa-bridge/                # Headless WhatsApp bridge daemon & MCP stdio binary (`serve`, `login`, `mcp`)
 internal/
   kernelfs/                   # Kernel capability probe (cgroup v2, PSI, /proc/meminfo) + MemFS test double
   psi/                        # PSI POLLPRI epoll trigger watcher with 1 Hz fallback polling
@@ -37,6 +38,7 @@ internal/
   approval/                   # Ed25519 keygen (`keys init`), token minter, anti-replay nonce verifier
   mcpserver/                  # Official go-sdk MCP server (`/mcp`, `/v1/events` SSE, `/healthz`, stdio)
   sentinel/                   # Unified Sentinel daemon orchestrating collectors, reflexes, SQLite & MCP/SSE
+  wabridge/                   # Two-way whatsmeow SSE/poll bridge, LID allowlist, Ed25519 signer & 15s heartbeat watcher
 policy/                       # `actions.yaml` catalog & `plan.schema.json`
 .kiro/
   steering/                   # `rules.md`, `product.md`, `tech.md`, `structure.md`, `linux-kernel.md`, `incident-response.md`
@@ -59,13 +61,21 @@ go install ./cmd/franken
 # Build static Linux binaries (pure Go, CGO_ENABLED=0)
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/franken-linux-arm64 ./cmd/franken
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/franken-linux-amd64 ./cmd/franken
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/wa-bridge-linux-arm64 ./cmd/wa-bridge
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/wa-bridge-linux-amd64 ./cmd/wa-bridge
 
 # Provision Ed25519 approval keys (0600 private key for wa-bridge, 0644 public key for Sentinel)
 go run ./cmd/franken keys init --dir keys
 
+# Pair WhatsApp device via terminal QR code into pure-Go modernc.org/sqlite session store
+go run ./cmd/franken wa-login --db wa-bridge-session.db
+
 # Run Sentinel daemon on Linux host with Tailscale + Bearer auth
 export FRANKEN_BEARER_TOKEN="replace-with-strong-secret"
 go run ./cmd/franken sentinel serve --tailscale --port 8090 --db franken-sentinel.db
+
+# Run headless WhatsApp two-way bridge consuming Sentinel SSE + polls
+go run ./cmd/wa-bridge serve --sentinel http://100.64.0.10:8090 --admins +6281234567890 --priv-key keys/bridge-ed25519.key --wa-db wa-bridge-session.db
 
 # Connect Kiro agents over stdio to a remote/local Sentinel Streamable HTTP server
 go run ./cmd/franken mcp connect sentinel@localhost --token-env FRANKEN_BEARER_TOKEN

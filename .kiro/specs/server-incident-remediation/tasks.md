@@ -50,12 +50,12 @@
   - [x] 8.3 Streamable HTTP bound to the Tailscale interface with bearer auth; `/healthz`, `/v1/events` SSE
   - _Requirements: 4, 6.3, 8, 9_
 
-- [ ] 9. wa-bridge
-  - [ ] 9.1 whatsmeow session with modernc SQLite store (`_pragma=foreign_keys(1)`), QR pairing CLI
-  - [ ] 9.2 Templated first alert from Sentinel SSE (< 2 s)
-  - [ ] 9.3 Polls: create, decrypt vote, option-hash mapping, allowlist, text-code fallback
-  - [ ] 9.4 Heartbeat watch (15 s × 3) → `node silent` alert
-  - [ ] 9.5 MCP stdio tools: `wa_notify`, `wa_request_approval`, `wa_await_decision`, `wa_send_report`
+- [x] 9. wa-bridge
+  - [x] 9.1 whatsmeow session with modernc SQLite store (`_pragma=foreign_keys(1)`), QR pairing CLI
+  - [x] 9.2 Templated first alert from Sentinel SSE (< 2 s)
+  - [x] 9.3 Polls: create, decrypt vote, option-hash mapping, allowlist, text-code fallback
+  - [x] 9.4 Heartbeat watch (15 s × 3) → `node silent` alert
+  - [x] 9.5 MCP stdio tools: `wa_notify`, `wa_request_approval`, `wa_await_decision`, `wa_send_report`
   - _Requirements: 7.1–7.5, 11.2, 11.3_
 
 - [ ] 10. Kiro Crew integration

@@ -33,6 +33,8 @@ func runWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return runGuard(args[1:], stdin, stdout, stderr)
 	case "sentinel":
 		return runSentinel(args[1:], stdout, stderr)
+	case "wa-login":
+		return runWALogin(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
 		printRootUsage(stdout)
 		return 0
@@ -98,6 +100,7 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "  keys      Manage Ed25519 approval keys")
 	fmt.Fprintln(w, "  mcp       Run Sentinel MCP server or stdio-to-HTTP connector")
 	fmt.Fprintln(w, "  sentinel  Run unified Sentinel daemon (probe + telemetry + reflex + MCP/SSE)")
+	fmt.Fprintln(w, "  wa-login  Pair headless WhatsApp session via terminal QR code (modernc SQLite)")
 	fmt.Fprintln(w, "  guard     PreToolUse policy & protected-target validator for Kiro hooks")
 }
 

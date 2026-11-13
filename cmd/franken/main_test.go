@@ -283,3 +283,21 @@ func TestCLI_SentinelServeSecurityChecks(t *testing.T) {
 	}
 }
 
+func TestCLI_WALoginValidation(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	// Argumen posisional liar pada wa-login wajib ditolak dengan exit code 2
+	code := run([]string{"wa-login", "unexpected-arg"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit code 2 for extra positional arg on wa-login, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	// Uji bantuan --help (Flag.Parse memanggil exit code 2 untuk flag --help di FlagSet default ContinueOnError, cukup pastikan usage tercetak)
+	stdout.Reset()
+	stderr.Reset()
+	_ = run([]string{"wa-login", "--help"}, &stdout, &stderr)
+	if !strings.Contains(stderr.String(), "wa-login") {
+		t.Errorf("expected wa-login usage help, got %s", stderr.String())
+	}
+}
+
