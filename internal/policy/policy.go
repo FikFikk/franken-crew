@@ -337,3 +337,4 @@ func ComputePlanHash(plan *Plan) (string, error) {
 	sum := sha256.Sum256(canonicalBytes)
 	return hex.EncodeToString(sum[:]), nil
 }
+

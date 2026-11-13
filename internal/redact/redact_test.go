@@ -102,3 +102,4 @@ func TestLinesAndMap(t *testing.T) {
 		t.Errorf("target_ip not redacted: %v", redactedMap["target_ip"])
 	}
 }
+

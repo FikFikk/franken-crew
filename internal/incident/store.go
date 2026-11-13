@@ -339,3 +339,4 @@ func (s *Store) ConsumeNonce(ctx context.Context, nonce, incidentID, planHash st
 	_ = s.RecordAudit(ctx, incidentID, "approval-engine", "NONCE_CONSUMED", fmt.Sprintf(`{"nonce":"%s","plan_hash":"%s"}`, nonce, planHash))
 	return nil
 }
+

@@ -207,3 +207,4 @@ func TestStore_ReflexAndAuditTrail(t *testing.T) {
 		t.Errorf("expected at least 2 audit entries, got %d", len(trail))
 	}
 }
+

@@ -17,3 +17,4 @@ func killProcessGroup(cmd *exec.Cmd) {
 		_ = cmd.Process.Kill()
 	}
 }
+

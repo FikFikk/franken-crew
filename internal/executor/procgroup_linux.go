@@ -20,3 +20,4 @@ func killProcessGroup(cmd *exec.Cmd) {
 	// Mengirimkan sinyal negatif ke PID untuk mematikan satu grup proses penuh
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 }
+
