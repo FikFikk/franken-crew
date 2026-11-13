@@ -1,8 +1,8 @@
 {
   "name": "franken-architect",
   "description": "Root-cause diagnosis and remediation planner formulating strictly schema-validated Level 2 plans without direct execution authority.",
-  "model": "claude-sonnet-4",
-  "prompt": "You are Franken-Architect. Given triage evidence from Franken-Sentry, follow .kiro/steering/rules.md and .kiro/skills/incident-spec-writer/SKILL.md to diagnose the systemic root cause. If triage confidence < 0.6, produce an observe + escalate decision via @franken-sentinel/incident_transition. Otherwise synthesize up to two safe Level 2 remediation options validated against policy/plan.schema.json and policy/actions.yaml, citing evidence_ids on every step and scoping to the narrowest cgroup/unit. Submit via @franken-sentinel/plan_submit so Sentinel computes the canonical plan_hash and prepares human approval. Never call action_execute or raw shell tools, and never target PID 1, sshd, sentinel, wa-bridge, or tailscaled.",
+  "model": "claude-sonnet-4.6",
+  "prompt": "You are Franken-Architect. Given triage evidence from Franken-Sentry, follow .kiro/steering/rules.md and .kiro/skills/incident-spec-writer/SKILL.md to diagnose the systemic root cause. If triage confidence < 0.6, produce an observe + escalate decision via @franken-sentinel/incident_transition. Otherwise synthesize up to two safe Level 2 remediation options validated against schema/plan.schema.json and policy/actions.yaml, citing evidence_ids on every step and scoping to the narrowest cgroup/unit. Submit via @franken-sentinel/plan_submit so Sentinel computes the canonical plan_hash and prepares human approval. Never call action_execute, send WhatsApp messages, write repository files, or run raw shell commands, and never target PID 1, sshd, sentinel, wa-bridge, or tailscaled.",
   "tools": [
     "@franken-sentinel/node_snapshot",
     "@franken-sentinel/incident_get",
@@ -14,23 +14,52 @@
     "@franken-sentinel/plan_submit",
     "@franken-sentinel/incident_transition"
   ],
+  "excludedTools": [
+    "write",
+    "shell",
+    "web"
+  ],
   "permissions": {
     "rules": [
       {
-        "action": "allow",
-        "tool": "@franken-sentinel/plan_submit"
+        "capability": "mcp",
+        "match": [
+          "franken-sentinel/node_snapshot",
+          "franken-sentinel/incident_get",
+          "franken-sentinel/psi_history",
+          "franken-sentinel/cgroup_top",
+          "franken-sentinel/journal_tail",
+          "franken-sentinel/process_tree",
+          "franken-sentinel/zombie_report",
+          "franken-sentinel/plan_submit",
+          "franken-sentinel/incident_transition"
+        ],
+        "effect": "allow"
       },
       {
-        "action": "allow",
-        "tool": "@franken-sentinel/incident_transition"
+        "capability": "mcp",
+        "match": [
+          "franken-sentinel/action_execute",
+          "franken-sentinel/action_rollback",
+          "franken-sentinel/verify_health",
+          "franken-sentinel/postmortem_generate",
+          "franken-wa/*"
+        ],
+        "effect": "deny"
       },
       {
-        "action": "deny",
-        "tool": "@franken-sentinel/action_execute"
+        "capability": "shell",
+        "match": [
+          "*"
+        ],
+        "effect": "deny"
       },
       {
-        "action": "deny",
-        "tool": "execute_bash"
+        "capability": "fs_write",
+        "match": [
+          "**"
+        ],
+        "effect": "deny"
       }
     ]
   },
@@ -46,20 +75,14 @@
       ]
     }
   },
-  "hooks": {
-    "preToolUse": [
-      {
-        "matcher": "@franken-sentinel/*",
-        "command": "franken guard --audit"
-      }
-    ]
-  },
+  "includeMcpJson": false,
+  "includePowers": false,
   "resources": [
     "file://.kiro/steering/rules.md",
     "file://.kiro/steering/incident-response.md",
     "file://.kiro/skills/remediation-runbooks/SKILL.md",
     "file://.kiro/skills/incident-spec-writer/SKILL.md",
     "file://policy/actions.yaml",
-    "file://policy/plan.schema.json"
+    "file://schema/plan.schema.json"
   ]
 }

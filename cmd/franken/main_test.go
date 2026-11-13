@@ -133,6 +133,26 @@ func TestCLI_GuardPreToolUseAndAuditRedaction(t *testing.T) {
 			payload:  `{"tool_name":"@franken-sentinel/action_execute","tool_input":{"incident_id":"INC-GUARD-1","action":"unit_restart","unit":"haunted-api.service","approval_token":"ed25519.sig","note":"Authorization: Bearer sk-secretToken998877"}}`,
 			wantCode: 0,
 		},
+		{
+			name:     "Block Kiro V3 mcp_franken-sentinel_action_execute missing approval_token",
+			payload:  `{"tool_name":"mcp_franken-sentinel_action_execute","tool_input":{"action":"unit_restart","unit":"haunted-api.service"}}`,
+			wantCode: 2,
+		},
+		{
+			name:     "Block Kiro V3 mcp_franken_sentinel_plan_submit with protected PID 1",
+			payload:  `{"tool_name":"mcp_franken_sentinel_plan_submit","tool_input":{"incident_id":"INC-GUARD-1","steps":[{"action":"process_terminate","params":{"pid":1}}]}}`,
+			wantCode: 2,
+		},
+		{
+			name:     "Allow Kiro V3 mcp_franken-sentinel_action_execute with approval_token",
+			payload:  `{"tool_name":"mcp_franken-sentinel_action_execute","tool_input":{"incident_id":"INC-GUARD-1","action":"unit_restart","unit":"haunted-api.service","approval_token":"ed25519.sig"}}`,
+			wantCode: 0,
+		},
+		{
+			name:     "Allow Kiro V3 mcp_franken_wa_wa_notify",
+			payload:  `{"tool_name":"mcp_franken_wa_wa_notify","tool_input":{"incident_id":"INC-GUARD-1","severity":"P3","text":"Healthy summary"}}`,
+			wantCode: 0,
+		},
 	}
 
 	for _, tc := range cases {

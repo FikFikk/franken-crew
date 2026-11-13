@@ -284,8 +284,26 @@ func evaluateGuardPayload(raw string, cat *policy.Catalog) (guardDecision, strin
 
 func normalizeGuardToolName(name string) string {
 	trimmed := strings.TrimSpace(name)
+	// Format Kiro lama/selector eksplisit: @server/tool atau server/tool
 	if idx := strings.LastIndex(trimmed, "/"); idx >= 0 {
 		trimmed = trimmed[idx+1:]
+	}
+	// Format tool MCP Kiro V3: mcp_<server>_<tool> (mempertahankan underscore di nama tool)
+	for _, prefix := range []string{
+		"mcp_franken-sentinel_",
+		"mcp_franken_sentinel_",
+		"mcp_franken-wa_",
+		"mcp_franken_wa_",
+	} {
+		if len(trimmed) > len(prefix) && strings.EqualFold(trimmed[:len(prefix)], prefix) {
+			return trimmed[len(prefix):]
+		}
+	}
+	if len(trimmed) > 4 && strings.EqualFold(trimmed[:4], "mcp_") {
+		rest := trimmed[4:]
+		if sep := strings.IndexByte(rest, '_'); sep >= 0 && sep+1 < len(rest) {
+			return rest[sep+1:]
+		}
 	}
 	return trimmed
 }

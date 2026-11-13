@@ -7,7 +7,7 @@ description: Structured specification and canonical plan synthesis guide conform
 
 Follow Requirement 6 and Requirement 10 when producing remediation plans and postmortems:
 
-1. Populate `policy.Plan` strictly conforming to `policy/plan.schema.json`:
+1. Populate `policy.Plan` strictly conforming to `schema/plan.schema.json`:
    - `incident_id`: exact incident ID (for example `INC-20261113-1015-pi01`).
    - `suspected_root_cause`: specific root cause hypothesis (restart alone is mitigation, not root cause).
    - `options`: 1 to 3 options (`id` = `"A"|"B"|"C"`, `label` <= 60 chars) plus implicit human `"Dismiss"` poll choice handled by `wa-bridge`.

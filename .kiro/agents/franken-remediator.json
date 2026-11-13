@@ -1,10 +1,11 @@
 {
   "name": "franken-remediator",
   "description": "Human-approved Level 2 executor, 120s PSI/RAM health verifier, and automated postmortem writer.",
-  "model": "claude-sonnet-4",
-  "prompt": "You are Franken-Remediator. For a validated PLANNED incident containing L2 steps, request human vote via @franken-wa/wa_request_approval (up to 3 options; Dismiss added automatically) and block on @franken-wa/wa_await_decision. If GRANTED, execute the single approved L2 step via @franken-sentinel/action_execute passing the exact single-use Ed25519 approval_token. Never forge, widen, or replay tokens, never attempt L3 actions, and never touch protected units (PID 1, sshd, sentinel, wa-bridge, tailscaled). After execution, invoke @franken-sentinel/verify_health with window_seconds=120 and auto_transition=true so Sentinel verifies PSI (some_avg10 < 5.0, full_avg10 < 1.0) and RAM stability, rolls back active L1 reflexes, and moves to RESOLVED or ESCALATED. Always finish terminal incidents by calling @franken-sentinel/postmortem_generate and notifying the operator with @franken-wa/wa_send_report.",
+  "model": "claude-sonnet-4.6",
+  "prompt": "You are Franken-Remediator. For a validated PLANNED incident containing L2 steps, request human vote via @franken-wa/wa_request_approval (up to 3 options; Dismiss added automatically) and block on @franken-wa/wa_await_decision. If GRANTED, execute the single approved L2 step via @franken-sentinel/action_execute passing the exact single-use Ed25519 approval_token. Never forge, widen, or replay tokens, never attempt L3 actions, and never touch protected units (PID 1, sshd, sentinel, wa-bridge, tailscaled). After execution, invoke @franken-sentinel/verify_health with window_seconds=120 and auto_transition=true so Sentinel verifies PSI (some_avg10 < 5.0, full_avg10 < 1.0) and RAM stability, rolls back active L1 reflexes, and moves to RESOLVED or ESCALATED. Always finish terminal incidents by calling @franken-sentinel/postmortem_generate and notifying the operator with @franken-wa/wa_send_report. On morning-digest crons, call @franken-sentinel/incident_list and @franken-sentinel/node_snapshot, then deliver one concise redacted P3 digest via @franken-wa/wa_notify.",
   "tools": [
     "@franken-sentinel/node_snapshot",
+    "@franken-sentinel/incident_list",
     "@franken-sentinel/incident_get",
     "@franken-sentinel/psi_history",
     "@franken-sentinel/action_execute",
@@ -17,47 +18,53 @@
     "@franken-wa/wa_await_decision",
     "@franken-wa/wa_send_report"
   ],
+  "excludedTools": [
+    "write",
+    "shell",
+    "web"
+  ],
   "permissions": {
     "rules": [
       {
-        "action": "allow",
-        "tool": "@franken-sentinel/action_execute"
+        "capability": "mcp",
+        "match": [
+          "franken-sentinel/node_snapshot",
+          "franken-sentinel/incident_list",
+          "franken-sentinel/incident_get",
+          "franken-sentinel/psi_history",
+          "franken-sentinel/action_execute",
+          "franken-sentinel/action_rollback",
+          "franken-sentinel/incident_transition",
+          "franken-sentinel/verify_health",
+          "franken-sentinel/postmortem_generate",
+          "franken-wa/wa_notify",
+          "franken-wa/wa_request_approval",
+          "franken-wa/wa_await_decision",
+          "franken-wa/wa_send_report"
+        ],
+        "effect": "allow"
       },
       {
-        "action": "allow",
-        "tool": "@franken-sentinel/action_rollback"
+        "capability": "mcp",
+        "match": [
+          "franken-sentinel/plan_submit",
+          "franken-sentinel/incident_claim"
+        ],
+        "effect": "deny"
       },
       {
-        "action": "allow",
-        "tool": "@franken-sentinel/incident_transition"
+        "capability": "shell",
+        "match": [
+          "*"
+        ],
+        "effect": "deny"
       },
       {
-        "action": "allow",
-        "tool": "@franken-sentinel/verify_health"
-      },
-      {
-        "action": "allow",
-        "tool": "@franken-sentinel/postmortem_generate"
-      },
-      {
-        "action": "allow",
-        "tool": "@franken-wa/wa_notify"
-      },
-      {
-        "action": "allow",
-        "tool": "@franken-wa/wa_request_approval"
-      },
-      {
-        "action": "allow",
-        "tool": "@franken-wa/wa_await_decision"
-      },
-      {
-        "action": "allow",
-        "tool": "@franken-wa/wa_send_report"
-      },
-      {
-        "action": "deny",
-        "tool": "execute_bash"
+        "capability": "fs_write",
+        "match": [
+          "**"
+        ],
+        "effect": "deny"
       }
     ]
   },
@@ -79,18 +86,8 @@
       ]
     }
   },
-  "hooks": {
-    "preToolUse": [
-      {
-        "matcher": "@franken-sentinel/*",
-        "command": "franken guard --audit"
-      },
-      {
-        "matcher": "@franken-wa/*",
-        "command": "franken guard --audit"
-      }
-    ]
-  },
+  "includeMcpJson": false,
+  "includePowers": false,
   "resources": [
     "file://.kiro/steering/rules.md",
     "file://.kiro/steering/incident-response.md",

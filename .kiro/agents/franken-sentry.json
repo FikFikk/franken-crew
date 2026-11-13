@@ -1,8 +1,8 @@
 {
   "name": "franken-sentry",
   "description": "Read-only Level 0 monitor and triage agent inspecting live telemetry, PSI spikes, cgroups, journal streams, and zombie processes via Sentinel MCP.",
-  "model": "claude-sonnet-4",
-  "prompt": "You are Franken-Sentry, the read-only monitor and triage agent for FrankenCrew. On an open incident signal or cron sweep, claim an unclaimed incident with @franken-sentinel/incident_claim and inspect telemetry strictly via Level 0 read-only tools (node_snapshot, incident_list, incident_get, psi_history, cgroup_top, journal_tail, process_tree, zombie_report). Classify the anomaly into one class (heap_leak, traffic_spike, fork_storm, zombie_accumulation, log_flood, swap_thrash, external, unknown), attach confidence in [0,1], cite evidence_ids returned by Sentinel, and hand off to Franken-Architect. Never invoke mutating actions or shell commands.",
+  "model": "claude-sonnet-4.6",
+  "prompt": "You are Franken-Sentry, the read-only monitor and triage agent for FrankenCrew. On an open incident signal or cron sweep, claim an unclaimed incident with @franken-sentinel/incident_claim and inspect telemetry strictly via Level 0 read-only tools (node_snapshot, incident_list, incident_get, psi_history, cgroup_top, journal_tail, process_tree, zombie_report). Classify the anomaly into one class (heap_leak, traffic_spike, fork_storm, zombie_accumulation, log_flood, swap_thrash, external, unknown), attach confidence in [0,1], cite evidence_ids returned by Sentinel, and hand off to Franken-Architect. Never invoke mutating actions, write files, or run shell commands.",
   "tools": [
     "@franken-sentinel/incident_claim",
     "@franken-sentinel/node_snapshot",
@@ -14,59 +14,54 @@
     "@franken-sentinel/process_tree",
     "@franken-sentinel/zombie_report"
   ],
+  "excludedTools": [
+    "write",
+    "shell",
+    "web"
+  ],
   "permissions": {
     "rules": [
       {
-        "action": "allow",
-        "tool": "@franken-sentinel/incident_claim"
+        "capability": "mcp",
+        "match": [
+          "franken-sentinel/incident_claim",
+          "franken-sentinel/node_snapshot",
+          "franken-sentinel/incident_list",
+          "franken-sentinel/incident_get",
+          "franken-sentinel/psi_history",
+          "franken-sentinel/cgroup_top",
+          "franken-sentinel/journal_tail",
+          "franken-sentinel/process_tree",
+          "franken-sentinel/zombie_report"
+        ],
+        "effect": "allow"
       },
       {
-        "action": "allow",
-        "tool": "@franken-sentinel/node_snapshot"
+        "capability": "mcp",
+        "match": [
+          "franken-sentinel/action_execute",
+          "franken-sentinel/action_rollback",
+          "franken-sentinel/plan_submit",
+          "franken-sentinel/verify_health",
+          "franken-sentinel/postmortem_generate",
+          "franken-sentinel/incident_transition",
+          "franken-wa/*"
+        ],
+        "effect": "deny"
       },
       {
-        "action": "allow",
-        "tool": "@franken-sentinel/incident_list"
+        "capability": "shell",
+        "match": [
+          "*"
+        ],
+        "effect": "deny"
       },
       {
-        "action": "allow",
-        "tool": "@franken-sentinel/incident_get"
-      },
-      {
-        "action": "allow",
-        "tool": "@franken-sentinel/psi_history"
-      },
-      {
-        "action": "allow",
-        "tool": "@franken-sentinel/cgroup_top"
-      },
-      {
-        "action": "allow",
-        "tool": "@franken-sentinel/journal_tail"
-      },
-      {
-        "action": "allow",
-        "tool": "@franken-sentinel/process_tree"
-      },
-      {
-        "action": "allow",
-        "tool": "@franken-sentinel/zombie_report"
-      },
-      {
-        "action": "deny",
-        "tool": "@franken-sentinel/action_execute"
-      },
-      {
-        "action": "deny",
-        "tool": "@franken-sentinel/action_rollback"
-      },
-      {
-        "action": "deny",
-        "tool": "@franken-sentinel/plan_submit"
-      },
-      {
-        "action": "deny",
-        "tool": "execute_bash"
+        "capability": "fs_write",
+        "match": [
+          "**"
+        ],
+        "effect": "deny"
       }
     ]
   },
@@ -82,14 +77,8 @@
       ]
     }
   },
-  "hooks": {
-    "preToolUse": [
-      {
-        "matcher": "@franken-sentinel/*",
-        "command": "franken guard --audit"
-      }
-    ]
-  },
+  "includeMcpJson": false,
+  "includePowers": false,
   "resources": [
     "file://.kiro/steering/rules.md",
     "file://.kiro/steering/incident-response.md",

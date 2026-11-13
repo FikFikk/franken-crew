@@ -3,10 +3,10 @@
   "hooks": [
     {
       "name": "Pre-Tool Audit Logging & Safety Guard",
-      "description": "Audit every MCP tool payload (redacted) before execution via franken guard --audit and block raw_shell, L3 actions, PID 1/protected units, or L2 mutations lacking an Ed25519 approval_token with exit code 2.",
+      "description": "Audit every FrankenCrew MCP tool payload (redacted) in Kiro V3 formats (mcp_<server>_<tool> or @<server>/<tool>) before execution via franken guard --audit without blocking execute_bash globally.",
       "enabled": true,
       "trigger": "PreToolUse",
-      "matcher": "*",
+      "matcher": "^(@?franken[-_](sentinel|wa)/|mcp_franken[-_](sentinel|wa)_)",
       "action": {
         "type": "command",
         "command": "franken guard --audit"

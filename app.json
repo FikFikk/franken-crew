@@ -1,0 +1,84 @@
+{
+  "name": "franken-crew",
+  "version": "0.2.0",
+  "displayName": "FrankenCrew Sentinel",
+  "description": "Edge Linux self-healing server operator combining deterministic Go/eBPF kernel reflexes, Kiro Crew diagnostic reasoning, and Ed25519 WhatsApp approval gates.",
+  "author": "FikFikk",
+  "agents": [
+    ".kiro/agents/franken-sentry.json",
+    ".kiro/agents/franken-architect.json",
+    ".kiro/agents/franken-remediator.json"
+  ],
+  "skills": [
+    ".kiro/skills/linux-memory-forensics",
+    ".kiro/skills/incident-spec-writer",
+    ".kiro/skills/remediation-runbooks"
+  ],
+  "mcpServers": {
+    "franken-sentinel": {
+      "command": "franken",
+      "args": [
+        "mcp",
+        "connect",
+        "sentinel@localhost",
+        "--token-env",
+        "FRANKEN_BEARER_TOKEN"
+      ],
+      "env": {
+        "FRANKEN_BEARER_TOKEN": "${FRANKEN_BEARER_TOKEN}"
+      }
+    },
+    "franken-wa": {
+      "command": "wa-bridge",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "FRANKEN_BEARER_TOKEN": "${FRANKEN_BEARER_TOKEN}"
+      }
+    }
+  },
+  "crons": [
+    {
+      "name": "incident-sweep",
+      "every": 60,
+      "agent": "franken-sentry",
+      "message": "Claim any open P1/P2/POST_OOM incident atomically with incident_claim(claimer='franken-sentry'). Gather PSI history, cgroup_top, redacted journal_tail, process_tree, and zombie_report, classify the failure pattern with confidence and evidence_ids, and coordinate diagnosis via franken-architect (plan_submit against schema/plan.schema.json) and approved L2 execution plus 120s verify_health and postmortem_generate via franken-remediator.",
+      "enabled": true
+    },
+    {
+      "name": "morning-digest",
+      "cron_expr": "0 7 * * *",
+      "agent": "franken-remediator",
+      "message": "Call incident_list and node_snapshot to summarize deferred P3 memory pressure warnings and 24-hour node health stability, then send one concise redacted digest (<= 700 chars) via wa_notify with severity='P3'.",
+      "enabled": true
+    }
+  ],
+  "permissions": {
+    "mcpTools": [
+      "franken-sentinel/incident_claim",
+      "franken-sentinel/node_snapshot",
+      "franken-sentinel/incident_list",
+      "franken-sentinel/incident_get",
+      "franken-sentinel/psi_history",
+      "franken-sentinel/cgroup_top",
+      "franken-sentinel/journal_tail",
+      "franken-sentinel/process_tree",
+      "franken-sentinel/zombie_report",
+      "franken-sentinel/plan_submit",
+      "franken-sentinel/incident_transition",
+      "franken-sentinel/action_execute",
+      "franken-sentinel/action_rollback",
+      "franken-sentinel/verify_health",
+      "franken-sentinel/postmortem_generate",
+      "franken-wa/wa_notify",
+      "franken-wa/wa_request_approval",
+      "franken-wa/wa_await_decision",
+      "franken-wa/wa_send_report"
+    ],
+    "cron": true,
+    "storage": false,
+    "network": false
+  }
+}
+

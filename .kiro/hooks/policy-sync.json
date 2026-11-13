@@ -6,7 +6,7 @@
       "description": "Validate policy/actions.yaml and plan.schema.json invariants whenever policy files change.",
       "enabled": true,
       "trigger": "PostFileSave",
-      "matcher": "policy/**",
+      "matcher": "^(policy|schema)/.*",
       "action": {
         "type": "command",
         "command": "go test -count=1 ./internal/policy/... ./internal/mcpserver/..."
