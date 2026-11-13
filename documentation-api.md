@@ -67,6 +67,9 @@
 | `franken wa-login`             | `--db`, `--relogin`, `--timeout`                                                                                    | Login awal perangkat WhatsApp via terminal QR code ke session SQLite `modernc.org/sqlite`                                 | `0` paired · `1` error · `2` argumen tidak valid                                                                                                                                      |
 | `franken postmortem`           | `--db`, `--incident`, `--out`, `--author`, `--notes`                                                                | Generate laporan markdown postmortem terredaksi dari SQLite Sentinel                                                      | `0` tersimpan · `1` gagal · `2` argumen tidak valid                                                                                                                                   |
 | `franken chaos run`            | `--runs`, `--policy`, `--out`, `--node`, `--approver`                                                               | Jalankan 20 siklus chaos (`memory_leak`, `memory_spike`, `fork_storm`, `zombie_storm`, `log_flood`) end-to-end            | `0` seluruh siklus lulus `RESOLVED` · `1` ada kegagalan                                                                                                                               |
+| `franken lab simulate` | `--out`, `--policy` | Jalankan tiga skenario (heap leak, prompt injection, zombie storm) lewat detector, refleks, policy, verifier Ed25519, worker verifikasi, dan generator postmortem asli terhadap cgroup in-memory, lalu tulis replay `frankencrew.replay/v1` | `0` tersimpan · `1` gagal · `2` argumen tidak valid |
+| `franken lab export` | `--db`, `--out`, `--incident` (bisa diulang), `--source-kind` (`recording`/`simulation`), `--source-label`, `--node` | Ekspor incident yang sudah selesai dari SQLite Sentinel menjadi replay terredaksi untuk Graveyard | `0` tersimpan · `1` gagal · `2` argumen tidak valid |
+| `franken lab serve` | `--listen` (default `127.0.0.1:3008`), `--data-dir`, `--sentinel`, `--token-env` | Sajikan landing page dan Graveyard read-only dari aset yang di-embed (lihat bagian 3) | `0` berhenti normal · `1` gagal · `2` argumen tidak valid |
 
 ## 2. wa-bridge (`cmd/wa-bridge` + `internal/wabridge`)
 
@@ -97,47 +100,52 @@
 | `wa-bridge login` | `--db`, `--relogin`, `--timeout`                                                                                                                    | Pairing QR WhatsApp di terminal (ekuivalen `franken wa-login`)                                                                                                                                                                                                    | `0` paired · `1` gagal pairing                                                                           |
 | `wa-bridge mcp`   | Sama dengan `wa-bridge serve`                                                                                                                       | Jalankan runtime bridge + expose 4 MCP tool WhatsApp via `stdin`/`stdout`                                                                                                                                                                                         | Untuk integrasi agen Kiro Crew                                                                           |
 
-## 3. Haunted Lab (publik, read-only)
+## 3. Graveyard Dashboard (`franken lab serve`, publik, read-only)
 
-| Field             | Detail                                               |
-| ----------------- | ---------------------------------------------------- |
-| Method + Endpoint | `GET /api/nodes`                                     |
-| Auth Required     | Tidak                                                |
-| Headers           | —                                                    |
-| Query Params      | —                                                    |
-| Request Body      | —                                                    |
-| Response          | `200` `[{name, status, memory_pct, psi_some_avg10}]` |
-| Notes             | Rate limit 60 req/menit/IP                           |
+Server read-only untuk landing page dan replay incident. Semua route hanya menerima `GET`/`HEAD`; method lain dijawab `405` dengan `Allow: GET, HEAD`. Setiap respons membawa `Content-Security-Policy` ketat (`default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; ...`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy`, dan `Cross-Origin-Opener-Policy: same-origin`. Path dengan traversal, slash ter-encode, atau segmen kosong dijawab `404`.
 
-| Field             | Detail                                                                            |
-| ----------------- | --------------------------------------------------------------------------------- |
-| Method + Endpoint | `GET /api/incidents`                                                              |
-| Auth Required     | Tidak                                                                             |
-| Headers           | —                                                                                 |
-| Query Params      | `limit` (int, opsional, default 20, maks 100), `cursor` (string, opsional)        |
-| Request Body      | —                                                                                 |
-| Response          | `200` `{items: [{id, node, severity, state, opened_at, closed_at}], next_cursor}` |
-| Notes             | Data terredaksi                                                                   |
+| Field             | Detail                                                                                                     |
+| ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| Method + Endpoint | `GET /`                                                                                                    |
+| Auth Required     | Tidak                                                                                                      |
+| Response          | `200` `text/html` landing page (`ui/index.html`), `Cache-Control: no-cache`                                |
+| Notes             | Hanya `/` yang melayani halaman; `/index.html` sengaja `404`                                               |
 
-| Field             | Detail                                                                   |
-| ----------------- | ------------------------------------------------------------------------ |
-| Method + Endpoint | `GET /api/incidents/:id`                                                 |
-| Auth Required     | Tidak                                                                    |
-| Headers           | —                                                                        |
-| Query Params      | —                                                                        |
-| Request Body      | —                                                                        |
-| Response          | `200` incident + timeline + transcript agent + spec + postmortem · `404` |
-| Notes             | Nomor telepon & JID tidak pernah ditampilkan                             |
+| Field             | Detail                                                                                                     |
+| ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| Method + Endpoint | `GET /dist/*`, `GET /assets/*`                                                                             |
+| Auth Required     | Tidak                                                                                                      |
+| Response          | `200` modul ES (`text/javascript`), CSS, dan SVG dari aset yang di-embed, `Cache-Control: public, max-age=300` |
+| Notes             | `ui/dist/index.mjs` juga menjadi `ui.entry` aplikasi Kiro Crew (default export komponen React + `mount()`) |
 
-| Field             | Detail                                      |
-| ----------------- | ------------------------------------------- |
-| Method + Endpoint | `GET /api/stream`                           |
-| Auth Required     | Tidak                                       |
-| Headers           | `Accept: text/event-stream`                 |
-| Query Params      | —                                           |
-| Request Body      | —                                           |
-| Response          | `200` SSE: vitals tiap 2 s + event incident |
-| Notes             | Maks 200 koneksi bersamaan                  |
+| Field             | Detail                                                                                                     |
+| ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| Method + Endpoint | `GET /data/*`                                                                                              |
+| Auth Required     | Tidak                                                                                                      |
+| Response          | `200` berkas dari `--data-dir` (dibuka lewat `os.Root`, symlink tidak bisa keluar direktori), fallback ke `ui/data/` bawaan, `Cache-Control: no-cache` |
+| Notes             | `*.json` membawa `Access-Control-Allow-Origin: *`; `replay.json` mengikuti skema `frankencrew.replay/v1` di bawah |
+
+| Field             | Detail                                                                                                     |
+| ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| Method + Endpoint | `GET /api/status`                                                                                          |
+| Auth Required     | Tidak                                                                                                      |
+| Response          | `200` JSON. Tanpa `--sentinel`: `{"mode":"replay"}`. Sentinel terjangkau: `{mode:"live", node, uptime_s, psi:{some_avg10, full_avg10}, memory_used_pct, open_incidents, latest:{id, severity, state, opened_at}, updated_at}`. Sentinel tidak terjangkau: `{mode:"offline", updated_at}` |
+| Notes             | `Access-Control-Allow-Origin: *`; `open_incidents` hanya menghitung 5 incident terbaru; proses lab memegang Bearer token Sentinel dari `--token-env` |
+
+| Field             | Detail                                                                                                     |
+| ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| Method + Endpoint | `GET /healthz`                                                                                             |
+| Auth Required     | Tidak                                                                                                      |
+| Response          | `200` `ok` (`text/plain`)                                                                                  |
+
+**Skema replay `frankencrew.replay/v1`:**
+
+- Root: `schema`, `generated_at`, `source{kind: simulation|recording, label, detail}`, `node`, `incidents[]`.
+- Incident: `id`, `title`, `scenario`, `severity`, `class`, `confidence`, `triage_summary`, `cgroup`, `unit`, `state`, `opened_at`, `closed_at`, `duration_s`, `tto_seconds`, `reflex_latency_ms`, `reflex_trigger`, `plan_hash`, `root_cause`, `follow_ups[]`, `stats{reflexes, l2_steps, blocked, verify_window_s}`, `series{limit_bytes, points[[t_s, memory_bytes, psi_some, psi_full]]}`, `events[]`, `poll`, `messages[]`, `postmortem_markdown`.
+- Event: `t` (detik relatif terhadap saat incident dibuka), `at`, `lane` (`kernel|sentinel|crew|human|verify`), `actor`, `kind`, `title`, `detail`, `level` (`info|ok|warn|error`), `inferred` (`true` = direkonstruksi dari protokol conductor/remediator, bukan event yang tercatat di Sentinel).
+- Poll: `t`, `title`, `options[]`, `chosen`, `voted_t`, `approver`. Message: `t`, `from` (`bot|operator`), `kind` (`alert|poll|vote|text|report`), `text` (markup WhatsApp `*bold*` dan `` `code` ``).
+
+Catatan: rancangan awal endpoint `/api/nodes`, `/api/incidents`, `/api/incidents/:id`, dan `/api/stream` tidak diimplementasikan. Replay JSON statis menggantikannya, sehingga pengunjung publik tidak pernah berbicara langsung dengan Sentinel.
 
 ## 4. Tugas Terjadwal
 
