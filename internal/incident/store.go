@@ -285,6 +285,96 @@ func (s *Store) UpdateReflexStatus(ctx context.Context, id, status string, rolle
 	return nil
 }
 
+// MarkReflexRolledBack menandai aksi refleks berstatus APPLIED menjadi rolled-back secara atomik agar rollback hanya berjalan tepat satu kali.
+func (s *Store) MarkReflexRolledBack(ctx context.Context, id, newStatus string, rolledBackAt time.Time) (bool, error) {
+	query := `
+	UPDATE reflex_actions
+	SET status = ?, rolled_back_at = ?
+	WHERE id = ? AND status = 'APPLIED';
+	`
+	res, err := s.db.ExecContext(ctx, query, newStatus, rolledBackAt.UTC(), id)
+	if err != nil {
+		return false, fmt.Errorf("mark reflex %s rolled back: %w", id, err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check rows affected for reflex %s: %w", id, err)
+	}
+	return affected > 0, nil
+}
+
+// GetReflexAction mengambil satu data aksi refleks berdasarkan ID.
+func (s *Store) GetReflexAction(ctx context.Context, id string) (*ReflexAction, error) {
+	query := `
+	SELECT id, incident_id, action, target, params_json, applied_at, ttl_seconds, expires_at, rolled_back_at, status
+	FROM reflex_actions WHERE id = ?;
+	`
+	row := s.db.QueryRowContext(ctx, query, id)
+
+	var a ReflexAction
+	err := row.Scan(
+		&a.ID, &a.IncidentID, &a.Action, &a.Target, &a.ParamsJSON,
+		&a.AppliedAt, &a.TTLSeconds, &a.ExpiresAt, &a.RolledBackAt, &a.Status,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("reflex action %s not found: %w", id, err)
+		}
+		return nil, fmt.Errorf("query reflex action %s: %w", id, err)
+	}
+	return &a, nil
+}
+
+// GetReflexActionsByIncident mengambil seluruh aksi refleks yang terkait dengan suatu insiden.
+func (s *Store) GetReflexActionsByIncident(ctx context.Context, incidentID string) ([]ReflexAction, error) {
+	query := `
+	SELECT id, incident_id, action, target, params_json, applied_at, ttl_seconds, expires_at, rolled_back_at, status
+	FROM reflex_actions WHERE incident_id = ? ORDER BY applied_at ASC;
+	`
+	return s.queryReflexActions(ctx, query, incidentID)
+}
+
+// CountReflexActionsByIncident menghitung jumlah aksi refleks L1 yang telah tercatat untuk sebuah insiden.
+func (s *Store) CountReflexActionsByIncident(ctx context.Context, incidentID string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM reflex_actions WHERE incident_id = ?;`, incidentID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count reflex actions for %s: %w", incidentID, err)
+	}
+	return count, nil
+}
+
+// GetPendingReflexActions mengambil seluruh aksi refleks yang masih aktif (APPLIED) terurut dari yang paling cepat kedaluwarsa.
+func (s *Store) GetPendingReflexActions(ctx context.Context) ([]ReflexAction, error) {
+	query := `
+	SELECT id, incident_id, action, target, params_json, applied_at, ttl_seconds, expires_at, rolled_back_at, status
+	FROM reflex_actions WHERE status = 'APPLIED' ORDER BY expires_at ASC;
+	`
+	return s.queryReflexActions(ctx, query)
+}
+
+// queryReflexActions mengeksekusi query daftar ReflexAction dan memindai baris hasilnya.
+func (s *Store) queryReflexActions(ctx context.Context, query string, args ...any) ([]ReflexAction, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query reflex actions: %w", err)
+	}
+	defer rows.Close()
+
+	var list []ReflexAction
+	for rows.Next() {
+		var a ReflexAction
+		if err := rows.Scan(
+			&a.ID, &a.IncidentID, &a.Action, &a.Target, &a.ParamsJSON,
+			&a.AppliedAt, &a.TTLSeconds, &a.ExpiresAt, &a.RolledBackAt, &a.Status,
+		); err != nil {
+			return nil, fmt.Errorf("scan reflex action: %w", err)
+		}
+		list = append(list, a)
+	}
+	return list, rows.Err()
+}
+
 // RecordAudit menambahkan entri ke tabel log audit append-only.
 func (s *Store) RecordAudit(ctx context.Context, incidentID, actor, eventType, payloadJSON string) error {
 	query := `

@@ -1,6 +1,6 @@
 # FrankenCrew — Dokumentasi Logika Bisnis
 
-> Status: **Tahap 1, 2, 4, 5 Diimplementasikan** (Kernel telemetry & probe, signal collectors 100%: PSI watcher, inotify memory.events, 1 Hz sampler, journal pattern stream, zombie scanner, detector TTO, SQLite incident store & audit, evidence redaction pipeline, policy engine, safe fixed-argv executor). Sumber detail teknis: [docs/BLUEPRINT.md](docs/BLUEPRINT.md) dan [.kiro/specs/server-incident-remediation/](.kiro/specs/server-incident-remediation/).
+> Status: **Tahap 1–7 Diimplementasikan** (Kernel telemetry & probe, signal collectors 100%, detector TTO, SQLite incident store & audit, evidence redaction pipeline, policy engine, safe fixed-argv executor, Level 1 reflex engine + persistent TTL scheduler, serta Ed25519 approval key provisioning `franken keys init` & anti-replay token minter/verifier). Sumber detail teknis: [docs/BLUEPRINT.md](docs/BLUEPRINT.md) dan [.kiro/specs/server-incident-remediation/](.kiro/specs/server-incident-remediation/).
 
 ## 1. Siklus Hidup Incident
 

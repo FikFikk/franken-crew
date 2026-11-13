@@ -32,16 +32,16 @@
   - [x] 5.4 Property tests P1, P4
   - _Requirements: 6.2–6.4, 8.1, 8.3, 8.4_
 
-- [ ] 6. Reflex engine
-  - [ ] 6.1 `cgroup_reclaim`, `cgroup_throttle`, `admission_close` with rollback functions
-  - [ ] 6.2 TTL scheduler surviving Sentinel restart (persisted deadlines)
-  - [ ] 6.3 Property test P3
+- [x] 6. Reflex engine
+  - [x] 6.1 `cgroup_reclaim`, `cgroup_throttle`, `admission_close` with rollback functions
+  - [x] 6.2 TTL scheduler surviving Sentinel restart (persisted deadlines)
+  - [x] 6.3 Property test P3
   - _Requirements: 3.1–3.4_
 
-- [ ] 7. Approval tokens
-  - [ ] 7.1 Ed25519 key provisioning (`franken keys init`), public key on Sentinel, private key on wa-bridge (0600)
-  - [ ] 7.2 Mint (bridge) and verify + single-use nonce (Sentinel)
-  - [ ] 7.3 Property test P2
+- [x] 7. Approval tokens
+  - [x] 7.1 Ed25519 key provisioning (`franken keys init`), public key on Sentinel, private key on wa-bridge (0600)
+  - [x] 7.2 Mint (bridge) and verify + single-use nonce (Sentinel)
+  - [x] 7.3 Property test P2
   - _Requirements: 7.2, 8.2_
 
 - [ ] 8. Sentinel MCP server

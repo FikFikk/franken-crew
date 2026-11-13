@@ -1,6 +1,6 @@
 # FrankenCrew — Dokumentasi API
 
-> Status: **Tahap 1, 2, 4, 5 Diimplementasikan** (telemetry kernel, signal collectors 100%, PSI watcher, inotify memory.events, 1 Hz sampler, journal stream, zombie scanner, detector TTO, SQLite store & audit, policy validator, safe executor). Proyek ini bukan Laravel — tidak ada `routes/web.php` / `app/Console/Kernel.php`; penjadwalan memakai Kiro Crew cron dan timer internal Go.
+> Status: **Tahap 1–7 Diimplementasikan** (telemetry kernel, signal collectors 100%, detector TTO, SQLite store & audit, policy validator, safe executor, L1 reflex engine & TTL rollback scheduler, serta Ed25519 key provisioning `franken keys init` & approval token protocol). Proyek ini bukan Laravel — tidak ada `routes/web.php` / `app/Console/Kernel.php`; penjadwalan memakai Kiro Crew cron dan timer internal Go.
 
 ## 1. Sentinel HTTP (hanya interface Tailscale)
 
