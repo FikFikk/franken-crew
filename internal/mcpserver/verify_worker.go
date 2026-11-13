@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/FikFikk/franken-crew/internal/cgroup"
 	"github.com/FikFikk/franken-crew/internal/incident"
+	"github.com/FikFikk/franken-crew/internal/kernelfs"
+	"github.com/FikFikk/franken-crew/internal/postmortem"
 )
 
 // defaultVerifyPollInterval menentukan jeda default polling metrik untuk background worker verifikasi.
@@ -334,13 +337,40 @@ func (s *Server) finalizeForwardVerification(ctx context.Context, st *verifyStat
 		fmt.Sprintf(`{"status":%q,"healthy":%t,"state":%q,"rolled_back":%d,"psi_some_avg10":%.2f,"psi_full_avg10":%.2f,"mem_growth_pct":%.2f,"oom_kill":%d}`,
 			statusStr, healthy, string(finalState), rolledBack, sample.PSISomeAvg10, sample.PSIFullAvg10, details.MemoryGrowthPct, sample.Events.OOMKill))
 
+	eventData := map[string]any{"status": statusStr, "healthy": healthy, "rolled_back": rolledBack}
+	if len(failures) > 0 {
+		eventData["failure_reasons"] = truncateReasons(failures, 3, 300)
+	}
+
+	// Tutup loop secara deterministik tanpa menunggu agen LLM: tulis postmortem saat insiden sudah final,
+	// lalu umumkan path-nya lewat verification.completed agar wa-bridge bisa mengirim laporan akhir
+	if s.cfg.AutoPostmortem && isTerminalState(finalState) {
+		outDir := strings.TrimSpace(s.cfg.PostmortemDir)
+		if outDir == "" {
+			outDir = "incidents"
+		}
+		doc, pmErr := postmortem.GenerateAndWrite(ctx, s.cfg.Store, postmortem.Options{
+			IncidentID: spec.incidentID,
+			OutputDir:  outDir,
+			Author:     "franken-sentinel",
+			Notes:      summaryMsg,
+			Clock:      s.cfg.Clock,
+		})
+		if pmErr != nil {
+			_ = s.cfg.Store.RecordAudit(ctx, spec.incidentID, "sentinel", "POSTMORTEM_FAILED", fmt.Sprintf(`{"error":%q}`, pmErr.Error()))
+		} else {
+			eventData["postmortem_path"] = doc.FilePath
+			_ = s.cfg.Store.RecordAudit(ctx, spec.incidentID, "sentinel", "POSTMORTEM_WRITTEN", fmt.Sprintf(`{"path":%q}`, doc.FilePath))
+		}
+	}
+
 	s.broker.Publish(StreamEvent{
 		Type:       "verification.completed",
 		IncidentID: spec.incidentID,
 		Severity:   inc.Severity,
 		State:      string(finalState),
 		Summary:    summaryMsg,
-		Data:       map[string]any{"status": statusStr, "healthy": healthy, "rolled_back": rolledBack},
+		Data:       eventData,
 	})
 
 	elapsedSec := int64(evalNow.Sub(spec.baselineAt).Seconds())
@@ -396,6 +426,7 @@ func (s *Server) collectForwardPSIDetails(spec verifySpec, sample cgroup.Sample,
 		failures      []string
 		psiStable     = true
 		memStable     = true
+		memPts        []memPoint
 	)
 
 	for _, pt := range s.psiRing.Query(spec.normCg, lookbackMinutes, evalNow) {
@@ -436,6 +467,7 @@ func (s *Server) collectForwardPSIDetails(spec verifySpec, sample cgroup.Sample,
 			}
 			memEnd = pt.MemoryCurrent
 			memSamples++
+			memPts = append(memPts, memPoint{at: pt.At, bytes: pt.MemoryCurrent})
 		}
 	}
 
@@ -445,13 +477,32 @@ func (s *Server) collectForwardPSIDetails(spec verifySpec, sample cgroup.Sample,
 	}
 	spanSec := int64(math.Round(spanDur.Seconds()))
 
+	// Pertumbuhan relatif hanya informatif: proses yang baru di-restart wajar tumbuh saat warm-up
 	var memGrowthPct float64
 	if memSamples >= 2 && memStart > 0 {
 		memGrowthPct = (float64(memEnd) - float64(memStart)) / float64(memStart) * 100.0
-		// Tolak kelulusan bila RAM masih terus menanjak > 15% dibanding baseline jendela pemulihan
-		if memGrowthPct > MaxVerifyMemoryGrowthPct && memEnd >= (memPeak*90)/100 {
+	}
+
+	// Stabilitas memori dinilai dari tren: kemiringan regresi linear pada ekor jendela forward dan proyeksi TTO
+	// terhadap memory.max cgroup (atau MemTotal host dikurangi cadangan bila cgroup tanpa batas)
+	slope, hasSlope := memoryTrendSlope(memPts, memorySlopeTrailingWindow)
+	current := sample.MemoryCurrent
+	if memSamples > 0 {
+		current = memEnd
+	}
+	limit := s.memoryLimitFor(sample)
+	var headroom uint64
+	if limit > current {
+		headroom = limit - current
+	}
+	var ttoPtr *float64
+	if hasSlope && limit > 0 && slope > minMemorySlopeBytesPerSec {
+		tto := float64(headroom) / slope
+		ttoPtr = &tto
+		if tto < MinStableTTOSeconds {
 			memStable = false
-			failures = append(failures, fmt.Sprintf("memory unstable during %ds forward window: grew %.1f%% (%d -> %d bytes)", spec.windowSec, memGrowthPct, memStart, memEnd))
+			failures = append(failures, fmt.Sprintf("memory trend unstable during %ds forward window: slope %.1f KiB/s projects OOM in %.0fs (< %.0fs, headroom %d bytes)",
+				spec.windowSec, slope/1024, tto, MinStableTTOSeconds, headroom))
 		}
 	}
 
@@ -476,6 +527,92 @@ func (s *Server) collectForwardPSIDetails(spec verifySpec, sample cgroup.Sample,
 		OOMKillCount:      sample.Events.OOMKill,
 		WindowSamples:     windowSamples,
 		WindowSpanSeconds: spanSec,
+
+		MemorySlopeBytesPerSec: math.Round(slope*100) / 100,
+		MemoryHeadroomBytes:    headroom,
+		MemoryTTOSeconds:       ttoPtr,
 	}
 	return details, failures, psiStable, memStable
+}
+
+const (
+	// memorySlopeTrailingWindow membatasi regresi pada 60 detik terakhir agar fase warm-up awal tidak mendominasi tren.
+	memorySlopeTrailingWindow = 60 * time.Second
+	// minMemorySlopeBytesPerSec adalah ambang derau (1 KiB/s, sama dengan lantai slope detektor) di bawahnya tren dianggap datar.
+	minMemorySlopeBytesPerSec = 1024.0
+	// hostMemReserveBytes menyamai cadangan detektor (MemTotal - 64 MiB) untuk cgroup tanpa memory.max.
+	hostMemReserveBytes = 64 << 20
+)
+
+type memPoint struct {
+	at    time.Time
+	bytes uint64
+}
+
+// memoryTrendSlope menghitung kemiringan least-squares (byte/detik) dari titik pada jendela ekor;
+// bila ekor berisi kurang dari dua titik, seluruh titik forward dipakai.
+func memoryTrendSlope(points []memPoint, trailing time.Duration) (float64, bool) {
+	if len(points) < 2 {
+		return 0, false
+	}
+	pts := append([]memPoint(nil), points...)
+	sort.Slice(pts, func(i, j int) bool { return pts[i].at.Before(pts[j].at) })
+
+	cutoff := pts[len(pts)-1].at.Add(-trailing)
+	tail := pts
+	for i, p := range pts {
+		if !p.at.Before(cutoff) {
+			tail = pts[i:]
+			break
+		}
+	}
+	if len(tail) < 2 {
+		tail = pts
+	}
+
+	origin := tail[0].at
+	var sumX, sumY float64
+	for _, p := range tail {
+		sumX += p.at.Sub(origin).Seconds()
+		sumY += float64(p.bytes)
+	}
+	n := float64(len(tail))
+	meanX, meanY := sumX/n, sumY/n
+	var num, den float64
+	for _, p := range tail {
+		dx := p.at.Sub(origin).Seconds() - meanX
+		num += dx * (float64(p.bytes) - meanY)
+		den += dx * dx
+	}
+	if den == 0 {
+		return 0, false
+	}
+	return num / den, true
+}
+
+// memoryLimitFor mengembalikan batas memori efektif: memory.max cgroup, atau MemTotal host dikurangi cadangan.
+func (s *Server) memoryLimitFor(sample cgroup.Sample) uint64 {
+	if sample.MemoryMax > 0 {
+		return sample.MemoryMax
+	}
+	if s.cfg.FS == nil {
+		return 0
+	}
+	total, err := kernelfs.ReadMemTotalBytes(s.cfg.FS, s.cfg.ProcRoot)
+	if err != nil || total <= hostMemReserveBytes {
+		return 0
+	}
+	return total - hostMemReserveBytes
+}
+
+// truncateReasons membatasi jumlah dan panjang alasan kegagalan yang ikut dikirim lewat SSE.
+func truncateReasons(reasons []string, maxItems, maxLen int) string {
+	if len(reasons) > maxItems {
+		reasons = reasons[:maxItems]
+	}
+	joined := strings.Join(reasons, "; ")
+	if len(joined) > maxLen {
+		joined = joined[:maxLen-3] + "..."
+	}
+	return joined
 }

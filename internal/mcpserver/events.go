@@ -83,19 +83,17 @@ func (b *EventBroker) Publish(ev StreamEvent) StreamEvent {
 		b.history = append([]StreamEvent(nil), b.history[trim:]...)
 	}
 
-	targets := make([]chan StreamEvent, 0, len(b.subscribers))
+	// Kirim tetap di bawah lock: Unsubscribe menutup channel di bawah lock yang sama, sehingga pengiriman
+	// tidak pernah mengenai channel tertutup (panic) dan urutan ID antar-publisher tetap terjaga.
+	// Pengiriman non-blocking sehingga lock tidak pernah tertahan oleh konsumen SSE yang lambat.
 	for _, ch := range b.subscribers {
-		targets = append(targets, ch)
-	}
-	b.mu.Unlock()
-
-	for _, ch := range targets {
 		select {
 		case ch <- ev:
 		default:
 			// Jangan memblokir jalur utama Sentinel apabila salah satu konsumen lambat membaca SSE
 		}
 	}
+	b.mu.Unlock()
 	return ev
 }
 

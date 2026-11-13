@@ -357,35 +357,43 @@ func TestOpenWhatsAppClient_LoggerNeverWritesToStdout(t *testing.T) {
 	}
 }
 
-func submitTwoOptionTestPlan(t *testing.T, ctx context.Context, sentinelClient *SentinelClient, incID, unitA, unitB string) string {
+// submitTwoOptionTestPlan mendaftarkan plan 2-opsi yang seluruh targetnya berada di dalam cgroup insiden
+// (/franken.slice/haunted-api.service) dan mengutip evidence yang benar-benar tercatat untuk insiden tersebut.
+func submitTwoOptionTestPlan(t *testing.T, ctx context.Context, store *incident.Store, sentinelClient *SentinelClient, incID string) string {
 	t.Helper()
+	evID := "EVD-PLAN-" + incID
+	if err := store.SaveEvidence(ctx, &incident.EvidenceSnapshot{
+		ID: evID, IncidentID: incID, Kind: "telemetry_sample", RawData: `{"memory_current":490000000}`,
+	}); err != nil {
+		t.Fatalf("SaveEvidence(%s): %v", evID, err)
+	}
 	plan := policy.Plan{
 		IncidentID:         incID,
-		SuspectedRootCause: fmt.Sprintf("Heap growth detected inside %s and %s", unitA, unitB),
+		SuspectedRootCause: "Heap growth detected inside haunted-api.service",
 		Options: []policy.PlanOption{
 			{
 				ID:    "A",
-				Label: "Restart primary candidate",
+				Label: "Graceful PM2 reload",
 				Steps: []policy.PlanStep{
 					{
 						ID:             "step-a1",
-						Action:         "unit_restart",
-						Params:         map[string]any{"unit": unitA},
-						EvidenceIDs:    []string{"EVD-01"},
-						ExpectedEffect: "Restart " + unitA,
+						Action:         "pm2_reload",
+						Params:         map[string]any{"app": "haunted-api"},
+						EvidenceIDs:    []string{evID},
+						ExpectedEffect: "Reload haunted-api workers one at a time",
 					},
 				},
 			},
 			{
 				ID:    "B",
-				Label: "Restart secondary worker",
+				Label: "Restart the unit",
 				Steps: []policy.PlanStep{
 					{
 						ID:             "step-b1",
 						Action:         "unit_restart",
-						Params:         map[string]any{"unit": unitB},
-						EvidenceIDs:    []string{"EVD-01"},
-						ExpectedEffect: "Restart " + unitB,
+						Params:         map[string]any{"unit": "haunted-api.service"},
+						EvidenceIDs:    []string{evID},
+						ExpectedEffect: "Restart haunted-api.service",
 					},
 				},
 			},
@@ -486,7 +494,7 @@ func TestBridge_SSECriticalAlertAndPollFlow_EndToEnd(t *testing.T) {
 	}
 
 	// 2. Kiro Architect mendaftarkan plan 2-opsi di Sentinel (`plan_submit`), lalu Remediator memanggil `SendApprovalPoll`
-	planHash := submitTwoOptionTestPlan(t, context.Background(), sentinelClient, incID, "alpha.service", "haunted-api.service")
+	planHash := submitTwoOptionTestPlan(t, context.Background(), store, sentinelClient, incID)
 
 	// Pastikan plan_hash yang salah selalu ditolak (Temuan C2)
 	if _, badErr := bridge.SendApprovalPoll(context.Background(), PollRequest{
@@ -521,7 +529,7 @@ func TestBridge_SSECriticalAlertAndPollFlow_EndToEnd(t *testing.T) {
 	poll := polls[0]
 	expectedHash8 := planHash[:8]
 	if len(poll.Options) != 4 ||
-		!strings.Contains(poll.Options[0], "A: unit_restart alpha.service ["+expectedHash8+"]") ||
+		!strings.Contains(poll.Options[0], "A: pm2_reload haunted-api ["+expectedHash8+"]") ||
 		!strings.Contains(poll.Options[1], "B: unit_restart haunted-api.service ["+expectedHash8+"]") ||
 		poll.Options[2] != OptionRollbackReflex ||
 		poll.Options[3] != OptionDismiss {
@@ -559,12 +567,12 @@ func TestBridge_SSECriticalAlertAndPollFlow_EndToEnd(t *testing.T) {
 		t.Fatalf("wa-bridge must NOT execute L2 command itself after C1 fix; got calls=%v", runner.Calls())
 	}
 
-	// 6. Token opsi B HARUS GAGAL dipakai untuk menjalankan opsi A (`step-a1` / `alpha.service`)!
+	// 6. Token opsi B HARUS GAGAL dipakai untuk menjalankan opsi A (`step-a1` / `pm2_reload haunted-api`)!
 	_, wrongStepErr := sentinelClient.ActionExecute(context.Background(), mcpserver.ActionExecuteInput{
 		IncidentID:    incID,
 		StepID:        "step-a1",
-		Action:        "unit_restart",
-		Params:        map[string]any{"unit": "alpha.service"},
+		Action:        "pm2_reload",
+		Params:        map[string]any{"app": "haunted-api"},
 		ApprovalToken: decision.Token,
 	})
 	if wrongStepErr == nil {
@@ -644,7 +652,7 @@ func TestBridge_RollbackReflexAndDismissAndTextFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ApplyAdmissionClose: %v", err)
 	}
-	planHashA := submitTwoOptionTestPlan(t, context.Background(), sentinelClient, incA, "haunted-api.service", "worker.service")
+	planHashA := submitTwoOptionTestPlan(t, context.Background(), store, sentinelClient, incA)
 
 	pollA, err := bridge.SendApprovalPoll(context.Background(), PollRequest{
 		IncidentID: incA,
@@ -672,7 +680,7 @@ func TestBridge_RollbackReflexAndDismissAndTextFallback(t *testing.T) {
 	_ = store.CreateIncident(context.Background(), &incident.Incident{
 		ID: incMulti, Node: "pi-rb", Cgroup: "/franken.slice/haunted-api.service", Severity: "P2", State: incident.StateDetected,
 	})
-	planHashMulti := submitTwoOptionTestPlan(t, context.Background(), sentinelClient, incMulti, "alpha.service", "beta.service")
+	planHashMulti := submitTwoOptionTestPlan(t, context.Background(), store, sentinelClient, incMulti)
 	pollMulti, err := bridge.SendApprovalPoll(context.Background(), PollRequest{
 		IncidentID: incMulti,
 		PlanHash:   planHashMulti,
@@ -711,7 +719,7 @@ func TestBridge_RollbackReflexAndDismissAndTextFallback(t *testing.T) {
 	_ = store.CreateIncident(context.Background(), &incident.Incident{
 		ID: incB, Node: "pi-rb", Cgroup: "/franken.slice/haunted-api.service", Severity: "P2", State: incident.StateDetected,
 	})
-	planHashB := submitTwoOptionTestPlan(t, context.Background(), sentinelClient, incB, "haunted-api.service", "worker.service")
+	planHashB := submitTwoOptionTestPlan(t, context.Background(), store, sentinelClient, incB)
 	pollB, err := bridge.SendApprovalPoll(context.Background(), PollRequest{
 		IncidentID: incB,
 		PlanHash:   planHashB,
@@ -765,7 +773,7 @@ func TestBridge_PollPlanChangedBeforeVote_Rejected(t *testing.T) {
 	_ = store.CreateIncident(context.Background(), &incident.Incident{
 		ID: incID, Node: "pi-stale", Cgroup: "/franken.slice/haunted-api.service", Severity: "P1", State: incident.StateDetected,
 	})
-	planHashV1 := submitTwoOptionTestPlan(t, context.Background(), sentinelClient, incID, "haunted-api.service", "worker.service")
+	planHashV1 := submitTwoOptionTestPlan(t, context.Background(), store, sentinelClient, incID)
 
 	poll, err := bridge.SendApprovalPoll(context.Background(), PollRequest{
 		IncidentID: incID,
@@ -936,7 +944,7 @@ func TestBridge_RateLimitAndMCPStdioTools(t *testing.T) {
 		Severity: "P1",
 		State:    incident.StateDetected,
 	})
-	validPlanHash := submitTwoOptionTestPlan(t, ctx, sentinelClient, "INC-MCP-WAIT", "haunted-api.service", "worker.service")
+	validPlanHash := submitTwoOptionTestPlan(t, ctx, store, sentinelClient, "INC-MCP-WAIT")
 
 	badRes, badErr := sess.CallTool(ctx, &mcp.CallToolParams{
 		Name: "wa_request_approval",
@@ -977,7 +985,7 @@ func TestBridge_RateLimitAndMCPStdioTools(t *testing.T) {
 	if strings.Contains(strings.Join(lastPoll.Options, ","), "Spoofed harmless text") {
 		t.Fatalf("poll leaked untrusted agent option label: %+v", lastPoll.Options)
 	}
-	if !strings.Contains(lastPoll.Options[0], "A: unit_restart haunted-api.service ["+validPlanHash[:8]+"]") {
+	if !strings.Contains(lastPoll.Options[0], "A: pm2_reload haunted-api ["+validPlanHash[:8]+"]") {
 		t.Fatalf("expected option A from stored plan, got %+v", lastPoll.Options)
 	}
 
@@ -1040,14 +1048,20 @@ func TestProperty_VoteToTokenExactBinding(t *testing.T) {
 		numOpts := rapid.IntRange(2, 4).Draw(rt, "numOpts")
 		chosenIdx := rapid.IntRange(0, numOpts-1).Draw(rt, "chosenIdx")
 		incID := fmt.Sprintf("INC-PBT-%d-%d", incSeq.Add(1), rapid.IntRange(10, 99).Draw(rt, "incSalt"))
+		// Insiden berada di unit daemon PM2 sehingga setiap aplikasi PM2 acak tetap di dalam cgroup insiden
 		if err := store.CreateIncident(context.Background(), &incident.Incident{
 			ID:       incID,
 			Node:     "pi-pbt",
-			Cgroup:   "/franken.slice/haunted-api.service",
+			Cgroup:   "/system.slice/pm2-pi.service",
 			Severity: "P1",
 			State:    incident.StateDetected,
 		}); err != nil {
 			rt.Fatalf("CreateIncident: %v", err)
+		}
+		if err := store.SaveEvidence(context.Background(), &incident.EvidenceSnapshot{
+			ID: "EVD-PBT-" + incID, IncidentID: incID, Kind: "telemetry_sample", RawData: `{"memory_current":1}`,
+		}); err != nil {
+			rt.Fatalf("SaveEvidence: %v", err)
 		}
 
 		optLetters := []string{"A", "B", "C", "D"}
@@ -1063,17 +1077,17 @@ func TestProperty_VoteToTokenExactBinding(t *testing.T) {
 					ID:             stepID,
 					Action:         "pm2_reload",
 					Params:         map[string]any{"app": appName},
-					EvidenceIDs:    []string{"EVD-PBT"},
+					EvidenceIDs:    []string{"EVD-PBT-" + incID},
 					ExpectedEffect: "Reload " + appName,
 				}
 			} else {
-				unitName := fmt.Sprintf("svc-%s-%d.service", strings.ToLower(id), i)
+				appName := fmt.Sprintf("api-%s-%d", strings.ToLower(id), i)
 				st = policy.PlanStep{
 					ID:             stepID,
-					Action:         "unit_restart",
-					Params:         map[string]any{"unit": unitName},
-					EvidenceIDs:    []string{"EVD-PBT"},
-					ExpectedEffect: "Restart " + unitName,
+					Action:         "pm2_restart_instance",
+					Params:         map[string]any{"app": appName, "pm_id": i},
+					EvidenceIDs:    []string{"EVD-PBT-" + incID},
+					ExpectedEffect: "Restart one worker of " + appName,
 				}
 			}
 			planOpts = append(planOpts, policy.PlanOption{

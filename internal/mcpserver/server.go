@@ -46,6 +46,8 @@ type Config struct {
 	TerminatePollInterval time.Duration
 	ProcessAlive          func(ctx context.Context, pid int) bool
 	VerifyPollInterval    time.Duration
+	// AutoPostmortem menulis postmortem secara deterministik saat verifikasi forward mencapai status final
+	AutoPostmortem bool
 }
 
 // Server mengimplementasikan MCP Server Sentinel melalui Streamable HTTP/SSE dan JSON-RPC stdio.
