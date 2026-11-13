@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,11 +32,19 @@ const (
 	MaxHostRAMRatio = 0.95
 	// DefaultHeadroomPercent menambahkan kelonggaran 5% di atas pemakaian saat ini untuk MemoryHigh.
 	DefaultHeadroomRatio = 1.05
+	// DefaultRollbackMaxAttempts membatasi jumlah percobaan ulang rollback sebelum dieskalasi menjadi FAILED_ROLLBACK.
+	DefaultRollbackMaxAttempts = 5
+	// DefaultRollbackInitialBackoff adalah jeda awal exponential backoff sebelum percobaan ulang rollback pertama.
+	DefaultRollbackInitialBackoff = 2 * time.Second
+	// DefaultRollbackMaxBackoff adalah jeda maksimal antar percobaan ulang rollback otomatis.
+	DefaultRollbackMaxBackoff = 60 * time.Second
 )
 
 var (
 	// ErrMaxReflexReached dikembalikan jika insiden sudah memiliki 3 aksi refleks L1.
 	ErrMaxReflexReached = errors.New("reflex: maximum 3 L1 actions per incident reached")
+	// ErrRollbackEscalated dikembalikan jika rollback gagal berulang kali melewati batas maksimal retry dan telah dieskalasi.
+	ErrRollbackEscalated = errors.New("reflex: rollback failed after max retries and was escalated")
 	// ErrProtectedTarget dikembalikan jika target aksi termasuk unit atau aplikasi yang dilindungi.
 	ErrProtectedTarget = errors.New("reflex: target unit or app is protected")
 	// ErrInvalidTTL dikembalikan jika TTL bernilai negatif atau melebihi batas maksimal 15 menit (900 detik).
@@ -54,26 +63,34 @@ var (
 
 // EngineConfig menyimpan dependensi dan batasan operasional untuk Reflex Engine.
 type EngineConfig struct {
-	Store             *incident.Store
-	FS                kernelfs.FS
-	Catalog           *policy.Catalog
-	PropertyDriver    UnitPropertyDriver
-	AdmissionDriver   AdmissionDriver
-	HostMemTotalBytes uint64
-	Clock             func() time.Time
+	Store                  *incident.Store
+	FS                     kernelfs.FS
+	Catalog                *policy.Catalog
+	PropertyDriver         UnitPropertyDriver
+	AdmissionDriver        AdmissionDriver
+	HostMemTotalBytes      uint64
+	Clock                  func() time.Time
+	RollbackMaxAttempts    int
+	RollbackInitialBackoff time.Duration
+	RollbackMaxBackoff     time.Duration
+	OnRollbackEscalated    func(action incident.ReflexAction, err error)
 }
 
 // Engine menjalankan aksi refleks L1 secara deterministik dan mengelola jadwal rollback TTL.
 type Engine struct {
-	store           *incident.Store
-	fs              kernelfs.FS
-	catalog         *policy.Catalog
-	propDriver      UnitPropertyDriver
-	admDriver       AdmissionDriver
-	hostMemTotal    uint64
-	clock           func() time.Time
-	applyMu         sync.Mutex
-	rollbackMu      sync.Mutex
+	store                  *incident.Store
+	fs                     kernelfs.FS
+	catalog                *policy.Catalog
+	propDriver             UnitPropertyDriver
+	admDriver              AdmissionDriver
+	hostMemTotal           uint64
+	clock                  func() time.Time
+	rollbackMaxAttempts    int
+	rollbackInitialBackoff time.Duration
+	rollbackMaxBackoff     time.Duration
+	onRollbackEscalated    func(action incident.ReflexAction, err error)
+	applyMu                sync.Mutex
+	rollbackMu             sync.Mutex
 }
 
 // ReclaimRequest memuat parameter untuk aksi refleks `cgroup_reclaim`.
@@ -114,6 +131,10 @@ type reflexParamsPayload struct {
 	AppliedIOWeight    string `json:"applied_io_weight,omitempty"`
 	PreviousIOWeight   string `json:"previous_io_weight,omitempty"`
 	PreviousAdmission  string `json:"previous_admission,omitempty"`
+	RollbackAttempts   int    `json:"rollback_attempts,omitempty"`
+	NextRetryAt        string `json:"next_retry_at,omitempty"`
+	LastRollbackError  string `json:"last_rollback_error,omitempty"`
+	RollbackExpired    bool   `json:"rollback_expired,omitempty"`
 }
 
 // NewEngine membuat instance Reflex Engine baru dengan nilai default yang aman.
@@ -137,15 +158,34 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	if clock == nil {
 		clock = time.Now
 	}
+	maxAttempts := cfg.RollbackMaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = DefaultRollbackMaxAttempts
+	}
+	initBackoff := cfg.RollbackInitialBackoff
+	if initBackoff <= 0 {
+		initBackoff = DefaultRollbackInitialBackoff
+	}
+	maxBackoff := cfg.RollbackMaxBackoff
+	if maxBackoff <= 0 {
+		maxBackoff = DefaultRollbackMaxBackoff
+	}
+	if maxBackoff < initBackoff {
+		maxBackoff = initBackoff
+	}
 
 	return &Engine{
-		store:        cfg.Store,
-		fs:           fsys,
-		catalog:      cfg.Catalog,
-		propDriver:   propDrv,
-		admDriver:    admDrv,
-		hostMemTotal: cfg.HostMemTotalBytes,
-		clock:        clock,
+		store:                  cfg.Store,
+		fs:                     fsys,
+		catalog:                cfg.Catalog,
+		propDriver:             propDrv,
+		admDriver:              admDrv,
+		hostMemTotal:           cfg.HostMemTotalBytes,
+		clock:                  clock,
+		rollbackMaxAttempts:    maxAttempts,
+		rollbackInitialBackoff: initBackoff,
+		rollbackMaxBackoff:     maxBackoff,
+		onRollbackEscalated:    cfg.OnRollbackEscalated,
 	}, nil
 }
 
@@ -297,14 +337,17 @@ func (e *Engine) ApplyThrottle(ctx context.Context, req ThrottleRequest) (*incid
 
 	// Jika ada aksi throttle aktif pada unit yang sama, warisi baseline awal sebelum intervensi refleks
 	basePrevMemoryHigh := prevProps.MemoryHigh
-	basePrevCPUQuota := restoreQuotaPlaceholder(req.CPUQuota, prevProps.CPUQuota)
+	basePrevCPUQuota := ""
+	if req.CPUQuota != "" {
+		basePrevCPUQuota = normalizeUnsetCPUQuota(prevProps.CPUQuota)
+	}
 	basePrevIOWeight := restoreIOWeightPlaceholder(req.IOWeight, prevProps.IOWeight)
 	if basePayload, found, bErr := e.findActiveBaseline(ctx, "cgroup_throttle", req.Unit); bErr == nil && found {
 		if basePayload.PreviousMemoryHigh != "" {
 			basePrevMemoryHigh = basePayload.PreviousMemoryHigh
 		}
-		if req.CPUQuota != "" && basePayload.PreviousCPUQuota != "" {
-			basePrevCPUQuota = basePayload.PreviousCPUQuota
+		if req.CPUQuota != "" && basePayload.AppliedCPUQuota != "" {
+			basePrevCPUQuota = normalizeUnsetCPUQuota(basePayload.PreviousCPUQuota)
 		}
 		if req.IOWeight != "" && basePayload.PreviousIOWeight != "" {
 			basePrevIOWeight = basePayload.PreviousIOWeight
@@ -413,6 +456,10 @@ func (e *Engine) ApplyAdmissionClose(ctx context.Context, req AdmissionRequest) 
 
 // Rollback mengembalikan satu aksi refleks L1 ke pengaturan awal secara aman dan menjamin eksekusi tepat satu kali.
 func (e *Engine) Rollback(ctx context.Context, reflexID string, expired bool) (bool, error) {
+	return e.rollbackWithPolicy(ctx, reflexID, expired, false)
+}
+
+func (e *Engine) rollbackWithPolicy(ctx context.Context, reflexID string, expired bool, respectBackoff bool) (bool, error) {
 	e.rollbackMu.Lock()
 	defer e.rollbackMu.Unlock()
 
@@ -421,7 +468,7 @@ func (e *Engine) Rollback(ctx context.Context, reflexID string, expired bool) (b
 		return false, err
 	}
 
-	// Hanya aksi dengan status APPLIED yang berhak di-rollback
+	// Hanya aksi dengan status APPLIED yang berhak di-rollback atau dicoba ulang.
 	if action.Status != "APPLIED" {
 		return false, nil
 	}
@@ -430,6 +477,14 @@ func (e *Engine) Rollback(ctx context.Context, reflexID string, expired bool) (b
 	if action.ParamsJSON != "" {
 		if err := json.Unmarshal([]byte(action.ParamsJSON), &payload); err != nil {
 			return false, fmt.Errorf("decode reflex params for %s: %w", reflexID, err)
+		}
+	}
+
+	now := e.clock().UTC()
+	if respectBackoff && payload.NextRetryAt != "" {
+		nextRetry, parseErr := time.Parse(time.RFC3339Nano, payload.NextRetryAt)
+		if parseErr == nil && now.Before(nextRetry) {
+			return false, nil
 		}
 	}
 
@@ -451,16 +506,12 @@ func (e *Engine) Rollback(ctx context.Context, reflexID string, expired bool) (b
 		rollbackErr = fmt.Errorf("%w: %s", ErrUnknownReflexAction, action.Action)
 	}
 
-	now := e.clock().UTC()
 	if rollbackErr != nil {
-		_ = e.store.UpdateReflexStatus(ctx, reflexID, "FAILED_ROLLBACK", &now)
-		_ = e.store.RecordAudit(ctx, action.IncidentID, "sentinel", "REFLEX_ROLLBACK_FAILED",
-			fmt.Sprintf(`{"reflex_id":"%s","action":"%s","error":%q}`, reflexID, action.Action, rollbackErr.Error()))
-		return false, fmt.Errorf("rollback reflex %s (%s): %w", reflexID, action.Action, rollbackErr)
+		return false, e.handleRollbackFailure(ctx, *action, payload, expired, now, rollbackErr)
 	}
 
 	targetStatus := "ROLLED_BACK"
-	if expired {
+	if expired || payload.RollbackExpired {
 		targetStatus = "EXPIRED_ROLLED_BACK"
 	}
 
@@ -469,10 +520,84 @@ func (e *Engine) Rollback(ctx context.Context, reflexID string, expired bool) (b
 		return false, err
 	}
 	if changed {
-		_ = e.store.RecordAudit(ctx, action.IncidentID, "sentinel", "REFLEX_ROLLED_BACK",
-			fmt.Sprintf(`{"reflex_id":"%s","action":"%s","status":"%s"}`, reflexID, action.Action, targetStatus))
+		auditBytes, _ := json.Marshal(map[string]any{
+			"reflex_id": reflexID,
+			"action":    action.Action,
+			"status":    targetStatus,
+			"attempts":  payload.RollbackAttempts + 1,
+		})
+		_ = e.store.RecordAudit(ctx, action.IncidentID, "sentinel", "REFLEX_ROLLED_BACK", string(auditBytes))
 	}
 	return changed, nil
+}
+
+// handleRollbackFailure mencatat jadwal retry dengan exponential backoff sebelum eskalasi permanen ke FAILED_ROLLBACK.
+func (e *Engine) handleRollbackFailure(ctx context.Context, action incident.ReflexAction, payload reflexParamsPayload, expired bool, now time.Time, rollbackErr error) error {
+	payload.RollbackAttempts++
+	payload.LastRollbackError = rollbackErr.Error()
+	if expired {
+		payload.RollbackExpired = true
+	}
+
+	if payload.RollbackAttempts < e.rollbackMaxAttempts {
+		delay := e.computeRollbackBackoff(payload.RollbackAttempts)
+		nextRetry := now.Add(delay)
+		payload.NextRetryAt = nextRetry.Format(time.RFC3339Nano)
+		if updatedJSON, err := json.Marshal(payload); err == nil {
+			_ = e.store.UpdateReflexParams(ctx, action.ID, string(updatedJSON))
+		}
+		retryAudit, _ := json.Marshal(map[string]any{
+			"reflex_id":     action.ID,
+			"action":        action.Action,
+			"attempt":       payload.RollbackAttempts,
+			"max_attempts":  e.rollbackMaxAttempts,
+			"next_retry_at": payload.NextRetryAt,
+			"error":         rollbackErr.Error(),
+		})
+		_ = e.store.RecordAudit(ctx, action.IncidentID, "sentinel", "REFLEX_ROLLBACK_RETRY", string(retryAudit))
+		return fmt.Errorf("rollback reflex %s (%s) attempt %d/%d failed, retry scheduled at %s: %w",
+			action.ID, action.Action, payload.RollbackAttempts, e.rollbackMaxAttempts, payload.NextRetryAt, rollbackErr)
+	}
+
+	// Batas retry terlampaui: simpan payload akhir, tandai FAILED_ROLLBACK permanen, dan lakukan eskalasi.
+	payload.NextRetryAt = ""
+	if updatedJSON, err := json.Marshal(payload); err == nil {
+		_ = e.store.UpdateReflexParams(ctx, action.ID, string(updatedJSON))
+	}
+	_ = e.store.UpdateReflexStatus(ctx, action.ID, "FAILED_ROLLBACK", &now)
+
+	escalateAudit, _ := json.Marshal(map[string]any{
+		"reflex_id":    action.ID,
+		"action":       action.Action,
+		"target":       action.Target,
+		"attempts":     payload.RollbackAttempts,
+		"max_attempts": e.rollbackMaxAttempts,
+		"error":        rollbackErr.Error(),
+	})
+	_ = e.store.RecordAudit(ctx, action.IncidentID, "sentinel", "REFLEX_ROLLBACK_ESCALATED", string(escalateAudit))
+	if e.onRollbackEscalated != nil {
+		e.onRollbackEscalated(action, rollbackErr)
+	}
+
+	return fmt.Errorf("%w: rollback reflex %s (%s) failed after %d attempts: %w",
+		ErrRollbackEscalated, action.ID, action.Action, payload.RollbackAttempts, rollbackErr)
+}
+
+func (e *Engine) computeRollbackBackoff(attempt int) time.Duration {
+	if attempt <= 1 {
+		return e.rollbackInitialBackoff
+	}
+	delay := e.rollbackInitialBackoff
+	for i := 1; i < attempt; i++ {
+		if delay >= e.rollbackMaxBackoff/2 {
+			return e.rollbackMaxBackoff
+		}
+		delay *= 2
+	}
+	if delay > e.rollbackMaxBackoff {
+		return e.rollbackMaxBackoff
+	}
+	return delay
 }
 
 // RollbackIncident me-rollback seluruh aksi refleks L1 yang masih aktif milik sebuah insiden.
@@ -499,7 +624,7 @@ func (e *Engine) RollbackIncident(ctx context.Context, incidentID string) (int, 
 	return rolledBackCount, firstErr
 }
 
-// SweepExpired memeriksa SQLite untuk seluruh aksi APPLIED yang melewati batas TTL dan mengeksekusi rollback otomatis.
+// SweepExpired memeriksa SQLite untuk seluruh aksi APPLIED yang melewati batas TTL atau menunggu jadwal retry rollback.
 func (e *Engine) SweepExpired(ctx context.Context) (int, error) {
 	pending, err := e.store.GetPendingReflexActions(ctx)
 	if err != nil {
@@ -511,10 +636,22 @@ func (e *Engine) SweepExpired(ctx context.Context) (int, error) {
 	var firstErr error
 
 	for _, act := range pending {
-		if now.Before(act.ExpiresAt) {
+		var payload reflexParamsPayload
+		if act.ParamsJSON != "" {
+			_ = json.Unmarshal([]byte(act.ParamsJSON), &payload)
+		}
+		isExpired := !now.Before(act.ExpiresAt)
+		isRetrying := payload.RollbackAttempts > 0
+		if !isExpired && !isRetrying {
 			continue
 		}
-		didRollback, rbErr := e.Rollback(ctx, act.ID, true)
+		if payload.NextRetryAt != "" {
+			nextRetry, parseErr := time.Parse(time.RFC3339Nano, payload.NextRetryAt)
+			if parseErr == nil && now.Before(nextRetry) {
+				continue
+			}
+		}
+		didRollback, rbErr := e.rollbackWithPolicy(ctx, act.ID, isExpired || payload.RollbackExpired, true)
 		if rbErr != nil && firstErr == nil {
 			firstErr = rbErr
 		}
@@ -551,11 +688,12 @@ func (e *Engine) RunScheduler(ctx context.Context, tickInterval time.Duration) e
 	}
 }
 
-func restoreQuotaPlaceholder(applied, previous string) string {
-	if applied != "" && previous == "" {
-		return "infinity"
+func normalizeUnsetCPUQuota(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "infinity" || trimmed == "[not set]" {
+		return ""
 	}
-	return previous
+	return trimmed
 }
 
 func restoreIOWeightPlaceholder(applied, previous string) string {
@@ -575,11 +713,13 @@ func buildRevertProps(p reflexParamsPayload) UnitProperties {
 		props.MemoryHigh = memHigh
 	}
 	if p.AppliedCPUQuota != "" {
-		cpuQ := p.PreviousCPUQuota
-		if cpuQ == "" {
-			cpuQ = "infinity"
+		prevQuota := normalizeUnsetCPUQuota(p.PreviousCPUQuota)
+		if prevQuota == "" {
+			// Reset ke kondisi unset via `CPUQuota=` karena systemctl menolak nilai "infinity" atau "[not set]".
+			props.ResetCPUQuota = true
+		} else {
+			props.CPUQuota = prevQuota
 		}
-		props.CPUQuota = cpuQ
 	}
 	if p.AppliedIOWeight != "" {
 		ioW := p.PreviousIOWeight

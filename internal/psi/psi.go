@@ -19,6 +19,8 @@ const (
 	DefaultStallUs = 150000
 	// DefaultWindowUs adalah ukuran jendela waktu pemantauan default (1.000.000 mikrodetik = 1 detik).
 	DefaultWindowUs = 1000000
+	// MinWindowUs adalah ukuran jendela minimum yang diizinkan oleh kernel Linux PSI (500.000 mikrodetik = 500 ms).
+	MinWindowUs = 500000
 	// DefaultFallbackThresholdAvg10 adalah ambang batas avg10 (%) saat mode fallback polling 1 Hz aktif.
 	DefaultFallbackThresholdAvg10 = 15.0
 	// DefaultRediscoverDelay adalah jeda waktu re-discovery saat cgroup dihapus (POLLERR).
@@ -77,13 +79,17 @@ func (s TriggerSpec) String() string {
 	window := s.WindowUs
 	if window <= 0 {
 		window = DefaultWindowUs
+	} else if window < MinWindowUs {
+		// Pastikan jendela minimal 500ms agar tidak ditolak EINVAL oleh kernel PSI Linux
+		window = MinWindowUs
 	}
 	return fmt.Sprintf("%s %d %d", kind, stall, window)
 }
 
-// Bytes mengembalikan payload byte trigger yang siap ditulis ke file descriptor memory.pressure.
+// Bytes mengembalikan payload byte trigger berakhiran NUL (\x00) yang siap ditulis ke file descriptor memory.pressure.
 func (s TriggerSpec) Bytes() []byte {
-	return []byte(s.String())
+	// Akhiri dengan NUL byte (\x00) agar kernel tidak menimpa digit terakhir window size dengan terminator C-string.
+	return []byte(s.String() + "\x00")
 }
 
 // PressureEvent merepresentasikan kejadian lonjakan tekanan memori yang terdeteksi oleh Watcher.
@@ -130,6 +136,9 @@ func NewWatcher(cfg WatcherConfig) *Watcher {
 	}
 	if cfg.Spec.StallUs <= 0 || cfg.Spec.WindowUs <= 0 {
 		cfg.Spec = DefaultTriggerSpec()
+	}
+	if cfg.Spec.WindowUs < MinWindowUs {
+		cfg.Spec.WindowUs = MinWindowUs
 	}
 	if cfg.FallbackPollInterval <= 0 {
 		cfg.FallbackPollInterval = DefaultFallbackPollInterval

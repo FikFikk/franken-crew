@@ -5,6 +5,8 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -252,6 +254,85 @@ func TestStore_ListClaimAndPlan(t *testing.T) {
 	claimCount, err := store.CountAuditByEvent(ctx, "INC-1", "INCIDENT_CLAIMED")
 	if err != nil || claimCount != 1 {
 		t.Fatalf("expected 1 INCIDENT_CLAIMED audit entry, got %d (err=%v)", claimCount, err)
+	}
+}
+
+func TestStore_TransitionState_AtomicConcurrency(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "concurrent_transition.db")
+	store, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	// Uji pula persaingan dua koneksi DB terpisah (mis. Sentinel daemon & hook guard) pada berkas WAL yang sama
+	store2, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewStore second conn: %v", err)
+	}
+	defer func() { _ = store2.Close() }()
+
+	ctx := context.Background()
+	incID := "INC-RACE-01"
+	if err := store.CreateIncident(ctx, &Incident{
+		ID:       incID,
+		Node:     "pi01",
+		Cgroup:   "/haunted-api.service",
+		Severity: "P1",
+		State:    StateDetected,
+	}); err != nil {
+		t.Fatalf("CreateIncident: %v", err)
+	}
+
+	const workers = 16
+	targets := []State{StateResolved, StateEscalated, StateDismissed}
+	var startBarrier sync.WaitGroup
+	startBarrier.Add(1)
+
+	var wg sync.WaitGroup
+	var winCount atomic.Int32
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			startBarrier.Wait()
+
+			targetStore := store
+			if idx%2 == 1 {
+				targetStore = store2
+			}
+			target := targets[idx%len(targets)]
+			if trErr := targetStore.TransitionState(ctx, incID, target, "worker", "race test"); trErr == nil {
+				winCount.Add(1)
+			}
+		}(i)
+	}
+
+	startBarrier.Done()
+	wg.Wait()
+
+	// Hanya tepat 1 goroutine yang boleh berhasil mentransisikan insiden dari DETECTED ke state terminal.
+	if got := winCount.Load(); got != 1 {
+		t.Fatalf("expected strictly 1 concurrent terminal transition winner, got %d", got)
+	}
+
+	finalInc, err := store.GetIncident(ctx, incID)
+	if err != nil {
+		t.Fatalf("GetIncident: %v", err)
+	}
+	if finalInc.State != StateResolved && finalInc.State != StateEscalated && finalInc.State != StateDismissed {
+		t.Fatalf("unexpected final state after concurrent race: %s", finalInc.State)
+	}
+
+	// Pastikan audit STATE_TRANSITION juga tercipta tepat satu kali dalam transaksi pemenang
+	trCount, err := store.CountAuditByEvent(ctx, incID, "STATE_TRANSITION")
+	if err != nil || trCount != 1 {
+		t.Fatalf("expected exactly 1 STATE_TRANSITION audit entry, got %d (err=%v)", trCount, err)
+	}
+
+	// Verifikasi penolakan transisi lanjutan pada state terminal tetap mengembalikan ErrInvalidTransition
+	if err := store.TransitionState(ctx, incID, StateTriaging, "worker", "late regress"); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("expected ErrInvalidTransition after terminal commit, got %v", err)
 	}
 }
 

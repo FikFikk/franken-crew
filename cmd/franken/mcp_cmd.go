@@ -130,7 +130,7 @@ func runMCPStdio(args []string, stderr io.Writer) int {
 	var cfg mcpFlagsConfig
 	fs.StringVar(&cfg.dbPath, "db", "franken-sentinel.db", "path to SQLite incident store")
 	fs.StringVar(&cfg.policyPath, "policy", "policy/actions.yaml", "path to action policy catalog YAML")
-	fs.StringVar(&cfg.pubKeyPath, "pub-key", "keys/sentinel-ed25519.pub", "path to Ed25519 public key PEM (optional for read-only)")
+	fs.StringVar(&cfg.pubKeyPath, "pub-key", "keys/sentinel-ed25519.pub", "path to Ed25519 public key PEM")
 	fs.StringVar(&cfg.nodeName, "node", "", "override Sentinel node identifier (defaults to hostname)")
 
 	if err := fs.Parse(args); err != nil {
@@ -194,6 +194,18 @@ func buildMCPServer(cfg mcpFlagsConfig, bearerToken string) (*mcpserver.Server, 
 	return srv, cleanup, nil
 }
 
+// loadRequiredPublicKey memastikan berkas kunci publik Ed25519 tersedia dan valid saat startup (fail-fast).
+func loadRequiredPublicKey(path string) (ed25519.PublicKey, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("public key path (--pub-key) is required")
+	}
+	pubKey, err := approval.LoadPublicKey(path)
+	if err != nil {
+		return nil, fmt.Errorf("load Ed25519 public key %q: %w", path, err)
+	}
+	return pubKey, nil
+}
+
 func buildMCPServerWithDeps(
 	cfg mcpFlagsConfig,
 	bearerToken string,
@@ -203,17 +215,14 @@ func buildMCPServerWithDeps(
 	reflexEng *reflex.Engine,
 	fsys kernelfs.FS,
 ) (*mcpserver.Server, func(), error) {
-	var verifier *approval.Verifier
-	if cfg.pubKeyPath != "" {
-		if pubKey, loadErr := loadOptionalPublicKey(cfg.pubKeyPath); loadErr == nil {
-			var err error
-			verifier, err = approval.NewVerifier(pubKey, store, nil)
-			if err != nil {
-				return nil, nil, err
-			}
-		} else if !errors.Is(loadErr, os.ErrNotExist) {
-			return nil, nil, loadErr
-		}
+	// Kegagalan memuat kunci publik Ed25519 wajib fail-fast saat startup agar Sentinel tidak berjalan tanpa verifikator token L2/L3.
+	pubKey, err := loadRequiredPublicKey(cfg.pubKeyPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	verifier, err := approval.NewVerifier(pubKey, store, nil)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	srv, err := mcpserver.New(mcpserver.Config{
@@ -231,10 +240,6 @@ func buildMCPServerWithDeps(
 	}
 
 	return srv, func() {}, nil
-}
-
-func loadOptionalPublicKey(path string) (ed25519.PublicKey, error) {
-	return approval.LoadPublicKey(path)
 }
 
 func printMCPUsage(w io.Writer) {

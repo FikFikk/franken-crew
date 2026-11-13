@@ -7,7 +7,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=-/etc/franken/franken.env
-ExecStart=/usr/local/bin/franken sentinel serve --tailscale --port 8090 --db /var/lib/franken/franken-sentinel.db --policy /etc/franken/policy/actions.yaml --pub-key /etc/franken/keys/bridge-ed25519.pub --token-env FRANKEN_BEARER_TOKEN
+RuntimeDirectory=franken
+StateDirectory=franken
+ExecStart=/usr/local/bin/franken sentinel serve --tailscale --port 8090 --db /var/lib/franken/franken-sentinel.db --policy /etc/franken/policy/actions.yaml --pub-key /etc/franken/keys/sentinel-ed25519.pub --token-env FRANKEN_BEARER_TOKEN
 Restart=always
 RestartSec=2s
 TimeoutStopSec=15s

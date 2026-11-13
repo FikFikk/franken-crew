@@ -323,3 +323,67 @@ func TestCLI_PostmortemAndChaosCommands(t *testing.T) {
 	}
 }
 
+func TestCLI_PublicKeyFailFast(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "sentinel.db")
+	policyPath := filepath.Join("..", "..", "policy", "actions.yaml")
+	missingPub := filepath.Join(tmpDir, "missing-sentinel-ed25519.pub")
+
+	t.Setenv("FRANKEN_FAILFAST_TOK", "valid-sentinel-token")
+
+	// 1. Subcommand serve dan stdio wajib gagal fatal jika --pub-key tidak ditemukan atau kosong (dilarang fallback nil verifier)
+	cases := [][]string{
+		{"mcp", "serve", "--db", dbPath, "--policy", policyPath, "--pub-key", missingPub, "--token-env", "FRANKEN_FAILFAST_TOK"},
+		{"sentinel", "serve", "--db", dbPath, "--policy", policyPath, "--pub-key", missingPub, "--token-env", "FRANKEN_FAILFAST_TOK"},
+		{"mcp", "stdio", "--db", dbPath, "--policy", policyPath, "--pub-key", missingPub},
+		{"mcp", "serve", "--db", dbPath, "--policy", policyPath, "--pub-key", "", "--token-env", "FRANKEN_FAILFAST_TOK"},
+	}
+
+	for _, args := range cases {
+		var stdout, stderr bytes.Buffer
+		code := run(args, &stdout, &stderr)
+		if code != 1 {
+			t.Errorf("args %v: expected exit code 1 on missing/empty pub-key, got %d (stderr=%s)", args, code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "public key") {
+			t.Errorf("args %v: expected explicit public key error in stderr, got %s", args, stderr.String())
+		}
+	}
+
+	// 2. Pastikan file sentinel-ed25519.pub hasil `keys init` dapat dimuat sukses oleh buildMCPServerWithDeps
+	keyDir := filepath.Join(tmpDir, "keys")
+	_, pubPath, _, err := approval.InitKeys(keyDir, false)
+	if err != nil {
+		t.Fatalf("InitKeys: %v", err)
+	}
+	if filepath.Base(pubPath) != "sentinel-ed25519.pub" {
+		t.Fatalf("expected sentinel-ed25519.pub, got %s", pubPath)
+	}
+
+	store, err := incident.NewStore(filepath.Join(tmpDir, "ok.db"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	cat, err := policy.LoadCatalog(policyPath)
+	if err != nil {
+		t.Fatalf("LoadCatalog: %v", err)
+	}
+	eng, err := reflex.NewEngine(reflex.EngineConfig{Store: store, FS: kernelfs.NewMemFS(), Catalog: cat})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	srv, cleanup, err := buildMCPServerWithDeps(mcpFlagsConfig{
+		nodeName:   "pi01",
+		pubKeyPath: pubPath,
+	}, "valid-sentinel-token", store, cat, nil, eng, kernelfs.NewMemFS())
+	if err != nil || srv == nil {
+		t.Fatalf("expected valid sentinel-ed25519.pub to initialize MCP server, got err=%v", err)
+	}
+	if cleanup != nil {
+		cleanup()
+	}
+}
+

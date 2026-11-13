@@ -1,6 +1,7 @@
 package psi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync/atomic"
@@ -42,6 +43,65 @@ func TestDefaultTriggerSpec_Format(t *testing.T) {
 	spec := DefaultTriggerSpec()
 	if got := spec.String(); got != "some 150000 1000000" {
 		t.Fatalf("expected 'some 150000 1000000', got %q", got)
+	}
+	wantBytes := []byte("some 150000 1000000\x00")
+	if got := spec.Bytes(); !bytes.Equal(got, wantBytes) {
+		t.Fatalf("expected NUL-terminated bytes %q, got %q", wantBytes, got)
+	}
+}
+
+func TestTriggerSpec_EnforcesMinWindowAndNullTerminator(t *testing.T) {
+	// Window di bawah 500ms (500000 us) wajib dinaikkan ke 500000 us dan berakhiran NUL byte agar kernel tidak mengembalikan EINVAL.
+	spec := TriggerSpec{
+		Kind:     "some",
+		StallUs:  50000,
+		WindowUs: 100000,
+	}
+	if got := spec.String(); got != "some 50000 500000" {
+		t.Fatalf("expected clamped trigger 'some 50000 500000', got %q", got)
+	}
+	if got := spec.Bytes(); !bytes.Equal(got, []byte("some 50000 500000\x00")) {
+		t.Fatalf("expected NUL-terminated clamped bytes, got %q", got)
+	}
+
+	var gotSpec TriggerSpec
+	poller := &mockTriggerPoller{
+		fn: func(ctx context.Context, _ string, s TriggerSpec, onEvent func()) error {
+			gotSpec = s
+			onEvent()
+			<-ctx.Done()
+			return nil
+		},
+	}
+
+	mfs := kernelfs.NewMemFS()
+	pressurePath := "/sys/fs/cgroup/app.service/memory.pressure"
+	mfs.SetFile(pressurePath, "some avg10=20.00 avg60=10.00 avg300=2.00 total=100000\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n")
+
+	watcher := NewWatcher(WatcherConfig{
+		FS:     mfs,
+		Poller: poller,
+		Spec: TriggerSpec{
+			Kind:     "some",
+			StallUs:  50000,
+			WindowUs: 250000,
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan PressureEvent, 1)
+	go func() {
+		_ = watcher.WatchTarget(ctx, "/app.service", pressurePath, out)
+	}()
+
+	select {
+	case <-out:
+		if gotSpec.WindowUs < MinWindowUs {
+			t.Fatalf("expected Watcher to clamp WindowUs >= %d, got %d", MinWindowUs, gotSpec.WindowUs)
+		}
+	case <-time.After(150 * time.Millisecond):
+		t.Fatalf("timed out waiting for PSI event")
 	}
 }
 

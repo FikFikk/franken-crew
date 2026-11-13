@@ -28,9 +28,10 @@ var (
 
 // UnitProperties menyimpan properti resource cgroup/systemd yang dapat diatur sementara secara runtime.
 type UnitProperties struct {
-	MemoryHigh string `json:"memory_high,omitempty"`
-	CPUQuota   string `json:"cpu_quota,omitempty"`
-	IOWeight   string `json:"io_weight,omitempty"`
+	MemoryHigh    string `json:"memory_high,omitempty"`
+	CPUQuota      string `json:"cpu_quota,omitempty"`
+	ResetCPUQuota bool   `json:"reset_cpu_quota,omitempty"`
+	IOWeight      string `json:"io_weight,omitempty"`
 }
 
 // UnitPropertyDriver mengabstraksikan pembacaan dan modifikasi properti runtime systemd unit.
@@ -119,24 +120,36 @@ func normalizeCPUQuotaFromShow(raw string) string {
 	return trimmed
 }
 
-// SetProperties mengatur properti runtime systemd menggunakan `systemctl set-property --runtime` tanpa shell.
-func (d *ExecutorPropertyDriver) SetProperties(ctx context.Context, unit string, props UnitProperties) error {
+// buildSetPropertyArgs menyusun daftar argumen `systemctl set-property --runtime` secara aman dan teruji.
+func buildSetPropertyArgs(unit string, props UnitProperties) ([]string, error) {
 	if !validUnitNameRegex.MatchString(unit) {
-		return fmt.Errorf("invalid systemd unit name %q", unit)
+		return nil, fmt.Errorf("invalid systemd unit name %q", unit)
 	}
 
 	args := []string{"set-property", "--runtime", unit}
 	if props.MemoryHigh != "" {
 		args = append(args, "MemoryHigh="+props.MemoryHigh)
 	}
-	if props.CPUQuota != "" {
+	if props.ResetCPUQuota || props.CPUQuota == "infinity" || props.CPUQuota == "[not set]" {
+		// Kirim nilai kosong "CPUQuota=" saat mereset kuota karena systemctl menolak "infinity" maupun "[not set]".
+		args = append(args, "CPUQuota=")
+	} else if props.CPUQuota != "" {
 		args = append(args, "CPUQuota="+props.CPUQuota)
 	}
 	if props.IOWeight != "" {
 		if _, err := strconv.Atoi(props.IOWeight); err != nil {
-			return fmt.Errorf("invalid IOWeight value %q: %w", props.IOWeight, err)
+			return nil, fmt.Errorf("invalid IOWeight value %q: %w", props.IOWeight, err)
 		}
 		args = append(args, "IOWeight="+props.IOWeight)
+	}
+	return args, nil
+}
+
+// SetProperties mengatur properti runtime systemd menggunakan `systemctl set-property --runtime` tanpa shell.
+func (d *ExecutorPropertyDriver) SetProperties(ctx context.Context, unit string, props UnitProperties) error {
+	args, err := buildSetPropertyArgs(unit, props)
+	if err != nil {
+		return err
 	}
 
 	// Jika tidak ada properti untuk diterapkan, kembalikan nil

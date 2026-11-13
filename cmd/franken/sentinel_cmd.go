@@ -70,6 +70,10 @@ func runSentinelServe(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return 1
 	}
+	if _, err := loadRequiredPublicKey(cfg.pubKeyPath); err != nil {
+		fmt.Fprintf(stderr, "error initializing Sentinel: %v\n", err)
+		return 1
+	}
 
 	// Lakukan fail-fast capability probe sebelum mengikat HTTP socket atau membuka worker
 	osFS := kernelfs.NewOSFS()

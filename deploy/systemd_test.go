@@ -24,6 +24,9 @@ func TestSystemdUnits_HardeningDirectives(t *testing.T) {
 				"NoNewPrivileges=yes",
 				"ProtectHome=yes",
 				"PrivateTmp=yes",
+				"RuntimeDirectory=franken",
+				"StateDirectory=franken",
+				"sentinel-ed25519.pub",
 				"ReadWritePaths=/sys/fs/cgroup /var/lib/franken /run/franken",
 			},
 		},
@@ -37,6 +40,8 @@ func TestSystemdUnits_HardeningDirectives(t *testing.T) {
 				"ProtectHome=yes",
 				"PrivateTmp=yes",
 				"ProtectControlGroups=yes",
+				"StateDirectory=franken",
+				"ReadWritePaths=/var/lib/franken",
 			},
 		},
 	}
@@ -51,6 +56,9 @@ func TestSystemdUnits_HardeningDirectives(t *testing.T) {
 			if !strings.Contains(text, directive) {
 				t.Errorf("%s missing required security/resource directive %q", unit.file, directive)
 			}
+		}
+		if strings.HasSuffix(unit.file, "franken-sentinel.service") && strings.Contains(text, "bridge-ed25519.pub") {
+			t.Errorf("%s must reference sentinel-ed25519.pub instead of bridge-ed25519.pub", unit.file)
 		}
 	}
 }

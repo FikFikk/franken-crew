@@ -3,6 +3,7 @@ package incident
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -331,15 +332,25 @@ func (s *Store) CountAuditByEvent(ctx context.Context, incidentID, eventType str
 	return count, nil
 }
 
-// TransitionState mengubah status insiden secara aman dengan memeriksa aturan state machine.
+// TransitionState memindahkan status insiden secara atomik dalam satu transaksi SQL sesuai aturan state machine.
 func (s *Store) TransitionState(ctx context.Context, id string, target State, actor, reason string) error {
-	inc, err := s.GetIncident(ctx, id)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("begin transition tx for %s: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var currentRaw string
+	if err := tx.QueryRowContext(ctx, `SELECT state FROM incidents WHERE id = ?;`, id).Scan(&currentRaw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrIncidentNotFound
+		}
+		return fmt.Errorf("query current state for %s: %w", id, err)
 	}
 
-	if !CanTransition(inc.State, target) {
-		return fmt.Errorf("%w: cannot transition from %s to %s", ErrInvalidTransition, inc.State, target)
+	currentState := State(currentRaw)
+	if !CanTransition(currentState, target) {
+		return fmt.Errorf("%w: cannot transition from %s to %s", ErrInvalidTransition, currentState, target)
 	}
 
 	now := time.Now().UTC()
@@ -348,18 +359,41 @@ func (s *Store) TransitionState(ctx context.Context, id string, target State, ac
 		closedAt = &now
 	}
 
-	query := `
+	// Gunakan compare-and-swap (WHERE id = ? AND state = ?) agar transisi konkuren tidak saling menimpa.
+	res, err := tx.ExecContext(ctx, `
 	UPDATE incidents
 	SET state = ?, updated_at = ?, closed_at = ?
-	WHERE id = ?;
-	`
-	_, err = s.db.ExecContext(ctx, query, string(target), now, closedAt, id)
+	WHERE id = ? AND state = ?;
+	`, string(target), now, closedAt, id, currentRaw)
 	if err != nil {
 		return fmt.Errorf("update incident state %s: %w", id, err)
 	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check rows affected transitioning %s to %s: %w", id, target, err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("%w: concurrent state conflict transitioning %s from %s to %s", ErrInvalidTransition, id, currentState, target)
+	}
 
-	auditPayload := fmt.Sprintf(`{"from":"%s","to":"%s","reason":"%s"}`, inc.State, target, reason)
-	_ = s.RecordAudit(ctx, id, actor, "STATE_TRANSITION", auditPayload)
+	auditPayload, err := json.Marshal(map[string]string{
+		"from":   string(currentState),
+		"to":     string(target),
+		"reason": reason,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal state transition audit for %s: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+	INSERT INTO audit_trail (incident_id, actor, event_type, payload_json, created_at)
+	VALUES (?, ?, ?, ?, ?);
+	`, id, actor, "STATE_TRANSITION", string(auditPayload), now); err != nil {
+		return fmt.Errorf("insert state transition audit for %s: %w", id, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit state transition %s to %s: %w", id, target, err)
+	}
 	return nil
 }
 
@@ -451,6 +485,27 @@ func (s *Store) UpdateReflexStatus(ctx context.Context, id, status string, rolle
 	_, err := s.db.ExecContext(ctx, query, status, rolledBackAt, id)
 	if err != nil {
 		return fmt.Errorf("update reflex status %s: %w", id, err)
+	}
+	return nil
+}
+
+// UpdateReflexParams memperbarui payload JSON metadata refleks (termasuk state retry rollback) selama berstatus APPLIED.
+func (s *Store) UpdateReflexParams(ctx context.Context, id, paramsJSON string) error {
+	query := `
+	UPDATE reflex_actions
+	SET params_json = ?
+	WHERE id = ? AND status = 'APPLIED';
+	`
+	res, err := s.db.ExecContext(ctx, query, paramsJSON, id)
+	if err != nil {
+		return fmt.Errorf("update reflex params %s: %w", id, err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check rows affected updating reflex params %s: %w", id, err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("reflex action %s not found or no longer APPLIED", id)
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ type spyPropertyDriver struct {
 	setCount     map[string]int
 	revertCount  atomic.Int32
 	failNextSet  bool
+	failRemaining int
 }
 
 func newSpyPropertyDriver() *spyPropertyDriver {
@@ -40,7 +42,7 @@ func (s *spyPropertyDriver) GetProperties(_ context.Context, unit string) (UnitP
 	if p, ok := s.current[unit]; ok {
 		return p, nil
 	}
-	return UnitProperties{MemoryHigh: "infinity", CPUQuota: "infinity", IOWeight: "100"}, nil
+	return UnitProperties{MemoryHigh: "infinity", CPUQuota: "", IOWeight: "100"}, nil
 }
 
 func (s *spyPropertyDriver) SetProperties(_ context.Context, unit string, props UnitProperties) error {
@@ -50,7 +52,26 @@ func (s *spyPropertyDriver) SetProperties(_ context.Context, unit string, props 
 		s.failNextSet = false
 		return errors.New("simulated systemd dbus error")
 	}
-	s.current[unit] = props
+	if s.failRemaining > 0 {
+		s.failRemaining--
+		return errors.New("simulated transient systemd dbus error")
+	}
+	updated := UnitProperties{MemoryHigh: "infinity", IOWeight: "100"}
+	if cur, ok := s.current[unit]; ok {
+		updated = cur
+	}
+	if props.MemoryHigh != "" {
+		updated.MemoryHigh = props.MemoryHigh
+	}
+	if props.ResetCPUQuota {
+		updated.CPUQuota = ""
+	} else if props.CPUQuota != "" {
+		updated.CPUQuota = props.CPUQuota
+	}
+	if props.IOWeight != "" {
+		updated.IOWeight = props.IOWeight
+	}
+	s.current[unit] = updated
 	s.setCalls = append(s.setCalls, props)
 	s.setCount[unit]++
 	if props.MemoryHigh == "infinity" || props.MemoryHigh == "max" {
@@ -184,8 +205,14 @@ func TestReflex_AllThreeL1ActionsAndRollback(t *testing.T) {
 	}
 
 	propsReverted, _ := spyProp.GetProperties(ctx, "haunted-api.service")
-	if propsReverted.MemoryHigh != "infinity" || propsReverted.CPUQuota != "infinity" || propsReverted.IOWeight != "100" {
+	if propsReverted.MemoryHigh != "infinity" || propsReverted.CPUQuota != "" || propsReverted.IOWeight != "100" {
 		t.Errorf("unit properties were not reverted to original state: %+v", propsReverted)
+	}
+	spyProp.mu.Lock()
+	lastCall := spyProp.setCalls[len(spyProp.setCalls)-1]
+	spyProp.mu.Unlock()
+	if !lastCall.ResetCPUQuota {
+		t.Errorf("expected rollback SetProperties call to set ResetCPUQuota=true, got %+v", lastCall)
 	}
 	admReverted, _ := eng.admDriver.ReadState(ctx, "haunted-api")
 	if strings.TrimSpace(admReverted) != "open" {
@@ -500,4 +527,260 @@ func TestReflex_Property_P4_MemoryHighAlwaysGECurrentUsage(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestExecutorPropertyDriver_BuildSetPropertyArgs_CPUQuotaReset(t *testing.T) {
+	// 1. Saat ResetCPUQuota aktif atau nilai sebelumnya masih berupa sentinel "infinity"/"[not set]", kirim "CPUQuota=".
+	for _, props := range []UnitProperties{
+		{MemoryHigh: "infinity", ResetCPUQuota: true},
+		{MemoryHigh: "infinity", CPUQuota: "infinity"},
+		{CPUQuota: "[not set]"},
+	} {
+		args, err := buildSetPropertyArgs("haunted-api.service", props)
+		if err != nil {
+			t.Fatalf("buildSetPropertyArgs(%+v) returned error: %v", props, err)
+		}
+		var hasReset bool
+		for _, a := range args {
+			if a == "CPUQuota=infinity" || a == "CPUQuota=[not set]" {
+				t.Fatalf("systemctl arg must never contain %q (args=%v)", a, args)
+			}
+			if a == "CPUQuota=" {
+				hasReset = true
+			}
+		}
+		if !hasReset {
+			t.Fatalf("expected 'CPUQuota=' reset arg for %+v, got %v", props, args)
+		}
+	}
+
+	// 2. Saat unit sebelumnya memiliki kuota spesifik (mis. "75%"), rollback wajib mempertahankan nilai tersebut.
+	args, err := buildSetPropertyArgs("haunted-api.service", UnitProperties{MemoryHigh: "infinity", CPUQuota: "75%"})
+	if err != nil {
+		t.Fatalf("buildSetPropertyArgs explicit quota: %v", err)
+	}
+	want := []string{"set-property", "--runtime", "haunted-api.service", "MemoryHigh=infinity", "CPUQuota=75%"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("expected args %v, got %v", want, args)
+	}
+}
+
+func TestReflex_CPUQuotaBaselineInheritedAndResetWithoutInfinity(t *testing.T) {
+	now := time.Date(2026, 11, 13, 5, 0, 0, 0, time.UTC)
+	eng, _, _, spyProp, incID := setupReflexTestEnv(t, func() time.Time { return now })
+	ctx := context.Background()
+	cgPath := "/sys/fs/cgroup/franken.slice/haunted-api.service"
+
+	// Terapkan 2 throttle beruntun: keduanya mengubah CPUQuota dari kondisi awal unset.
+	if _, err := eng.ApplyThrottle(ctx, ThrottleRequest{
+		IncidentID:      incID,
+		Unit:            "haunted-api.service",
+		CgroupPath:      cgPath,
+		MemoryHighBytes: 220 * 1024 * 1024,
+		CPUQuota:        "50%",
+		TTLSeconds:      120,
+	}); err != nil {
+		t.Fatalf("first ApplyThrottle: %v", err)
+	}
+	if _, err := eng.ApplyThrottle(ctx, ThrottleRequest{
+		IncidentID:      incID,
+		Unit:            "haunted-api.service",
+		CgroupPath:      cgPath,
+		MemoryHighBytes: 230 * 1024 * 1024,
+		CPUQuota:        "25%",
+		TTLSeconds:      120,
+	}); err != nil {
+		t.Fatalf("second ApplyThrottle: %v", err)
+	}
+
+	if _, err := eng.RollbackIncident(ctx, incID); err != nil {
+		t.Fatalf("RollbackIncident: %v", err)
+	}
+
+	props, _ := spyProp.GetProperties(ctx, "haunted-api.service")
+	if props.CPUQuota != "" {
+		t.Fatalf("expected CPUQuota restored to unset empty string, got %q", props.CPUQuota)
+	}
+}
+
+func TestReflex_RollbackRetryWithBackoffAndEscalation(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "retry_test.db")
+	store, err := incident.NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	cat, err := policy.LoadCatalog(filepath.Join("..", "..", "policy", "actions.yaml"))
+	if err != nil {
+		t.Fatalf("LoadCatalog: %v", err)
+	}
+
+	mfs := kernelfs.NewMemFS()
+	cgPath := "/sys/fs/cgroup/franken.slice/haunted-api.service"
+	mfs.SetFile(cgPath+"/memory.current", "104857600\n")
+
+	ctx := context.Background()
+	incID := "INC-RETRY-01"
+	if err := store.CreateIncident(ctx, &incident.Incident{
+		ID:       incID,
+		Node:     "pi01",
+		Cgroup:   "/franken.slice/haunted-api.service",
+		Severity: "P1",
+		State:    incident.StateDetected,
+	}); err != nil {
+		t.Fatalf("CreateIncident: %v", err)
+	}
+
+	t0 := time.Date(2026, 11, 13, 6, 0, 0, 0, time.UTC)
+	var curMu sync.Mutex
+	curNow := t0
+	clockFn := func() time.Time {
+		curMu.Lock()
+		defer curMu.Unlock()
+		return curNow
+	}
+	setTime := func(ts time.Time) {
+		curMu.Lock()
+		curNow = ts
+		curMu.Unlock()
+	}
+
+	spyProp := newSpyPropertyDriver()
+	var escalatedCount atomic.Int32
+	eng, err := NewEngine(EngineConfig{
+		Store:                  store,
+		FS:                     mfs,
+		Catalog:                cat,
+		PropertyDriver:         spyProp,
+		HostMemTotalBytes:      2 * 1024 * 1024 * 1024,
+		Clock:                  clockFn,
+		RollbackMaxAttempts:    3,
+		RollbackInitialBackoff: 5 * time.Second,
+		RollbackMaxBackoff:     30 * time.Second,
+		OnRollbackEscalated: func(_ incident.ReflexAction, _ error) {
+			escalatedCount.Add(1)
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	// === Bagian A: Kegagalan transien (2x gagal lalu berhasil di percobaan ke-3) ===
+	act1, err := eng.ApplyThrottle(ctx, ThrottleRequest{
+		IncidentID:      incID,
+		Unit:            "haunted-api.service",
+		CgroupPath:      cgPath,
+		MemoryHighBytes: 120 * 1024 * 1024,
+		CPUQuota:        "50%",
+		TTLSeconds:      60,
+	})
+	if err != nil {
+		t.Fatalf("ApplyThrottle 1: %v", err)
+	}
+
+	// Simulasikan 2 kegagalan SetProperties saat TTL habis pada t0 + 60s
+	spyProp.mu.Lock()
+	spyProp.failRemaining = 2
+	spyProp.mu.Unlock()
+
+	setTime(t0.Add(60 * time.Second))
+	swept, sweepErr := eng.SweepExpired(ctx)
+	if sweepErr == nil || swept != 0 {
+		t.Fatalf("expected attempt 1 failure (swept=0), got swept=%d err=%v", swept, sweepErr)
+	}
+	rec1, _ := store.GetReflexAction(ctx, act1.ID)
+	if rec1.Status != "APPLIED" {
+		t.Fatalf("expected status to stay APPLIED for retry instead of premature FAILED_ROLLBACK, got %s", rec1.Status)
+	}
+
+	// Pada t0 + 63s (baru +3s < initial backoff 5s), SweepExpired wajib menunda pemanggilan driver
+	spyProp.mu.Lock()
+	callsAfterAttempt1 := spyProp.setCount["haunted-api.service"]
+	spyProp.mu.Unlock()
+
+	setTime(t0.Add(63 * time.Second))
+	_, _ = eng.SweepExpired(ctx)
+	spyProp.mu.Lock()
+	if spyProp.setCount["haunted-api.service"] != callsAfterAttempt1 {
+		t.Fatalf("expected SweepExpired to respect 5s backoff before retry")
+	}
+	spyProp.mu.Unlock()
+
+	// Pada t0 + 65s (+5s terpenuhi), percobaan ke-2 berjalan dan gagal -> jadwal berikutnya +10s (t0 + 75s)
+	setTime(t0.Add(65 * time.Second))
+	if swept, sweepErr = eng.SweepExpired(ctx); sweepErr == nil || swept != 0 {
+		t.Fatalf("expected attempt 2 failure, got swept=%d err=%v", swept, sweepErr)
+	}
+	rec1, _ = store.GetReflexAction(ctx, act1.ID)
+	if rec1.Status != "APPLIED" {
+		t.Fatalf("expected status APPLIED after attempt 2 failure, got %s", rec1.Status)
+	}
+
+	// Sebelum +10s tercapai (t0 + 70s), SweepExpired kembali menunggu
+	setTime(t0.Add(70 * time.Second))
+	_, _ = eng.SweepExpired(ctx)
+	if recCheck, _ := store.GetReflexAction(ctx, act1.ID); recCheck.Status != "APPLIED" {
+		t.Fatalf("expected status APPLIED while waiting 10s backoff, got %s", recCheck.Status)
+	}
+
+	// Pada t0 + 75s (+10s terpenuhi), percobaan ke-3 sukses -> status menjadi EXPIRED_ROLLED_BACK
+	setTime(t0.Add(75 * time.Second))
+	swept, sweepErr = eng.SweepExpired(ctx)
+	if sweepErr != nil || swept != 1 {
+		t.Fatalf("expected attempt 3 to succeed (swept=1), got swept=%d err=%v", swept, sweepErr)
+	}
+	rec1, _ = store.GetReflexAction(ctx, act1.ID)
+	if rec1.Status != "EXPIRED_ROLLED_BACK" {
+		t.Fatalf("expected EXPIRED_ROLLED_BACK after retry recovery, got %s", rec1.Status)
+	}
+	if escalatedCount.Load() != 0 {
+		t.Fatalf("expected 0 escalations when retry recovered, got %d", escalatedCount.Load())
+	}
+
+	// === Bagian B: Kegagalan persisten melampaui RollbackMaxAttempts (3) -> eskalasi FAILED_ROLLBACK ===
+	act2, err := eng.ApplyThrottle(ctx, ThrottleRequest{
+		IncidentID:      incID,
+		Unit:            "haunted-api.service",
+		CgroupPath:      cgPath,
+		MemoryHighBytes: 120 * 1024 * 1024,
+		TTLSeconds:      60,
+	})
+	if err != nil {
+		t.Fatalf("ApplyThrottle 2: %v", err)
+	}
+
+	spyProp.mu.Lock()
+	spyProp.failRemaining = 10
+	spyProp.mu.Unlock()
+
+	base := t0.Add(200 * time.Second)
+	setTime(base)
+	_, err = eng.SweepExpired(ctx) // Attempt 1 -> backoff +5s
+	if err == nil || errors.Is(err, ErrRollbackEscalated) {
+		t.Fatalf("attempt 1 should schedule retry without escalation, got %v", err)
+	}
+	setTime(base.Add(5 * time.Second))
+	_, err = eng.SweepExpired(ctx) // Attempt 2 -> backoff +10s
+	if err == nil || errors.Is(err, ErrRollbackEscalated) {
+		t.Fatalf("attempt 2 should schedule retry without escalation, got %v", err)
+	}
+	setTime(base.Add(15 * time.Second))
+	_, err = eng.SweepExpired(ctx) // Attempt 3 -> batas tercapai -> eskalasi
+	if !errors.Is(err, ErrRollbackEscalated) {
+		t.Fatalf("expected ErrRollbackEscalated on attempt 3, got %v", err)
+	}
+
+	rec2, _ := store.GetReflexAction(ctx, act2.ID)
+	if rec2.Status != "FAILED_ROLLBACK" {
+		t.Fatalf("expected terminal FAILED_ROLLBACK after max retries, got %s", rec2.Status)
+	}
+	if escalatedCount.Load() != 1 {
+		t.Fatalf("expected OnRollbackEscalated callback once, got %d", escalatedCount.Load())
+	}
+	escAuditCount, err := store.CountAuditByEvent(ctx, incID, "REFLEX_ROLLBACK_ESCALATED")
+	if err != nil || escAuditCount != 1 {
+		t.Fatalf("expected 1 REFLEX_ROLLBACK_ESCALATED audit entry, got %d (err=%v)", escAuditCount, err)
+	}
 }

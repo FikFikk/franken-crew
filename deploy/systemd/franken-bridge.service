@@ -33,6 +33,7 @@ LockPersonality=yes
 RemoveIPC=yes
 PrivateDevices=yes
 ReadOnlyPaths=/etc/franken/keys
+StateDirectory=franken
 ReadWritePaths=/var/lib/franken
 
 # Batasi keluarga soket hanya UNIX dan TCP/IP untuk koneksi Sentinel Tailscale dan WebSocket WhatsApp

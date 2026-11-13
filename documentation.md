@@ -82,12 +82,13 @@ flowchart TD
 
 ### 2.6 Reflex Action (L1)
 
-| Field         | Aturan                                             | Catatan                                                 |
-| ------------- | -------------------------------------------------- | ------------------------------------------------------- |
-| jenis         | cgroup_throttle / cgroup_reclaim / admission_close | Semua reversible                                        |
-| MemoryHigh    | ≥ pemakaian saat ini, ≤ 95% RAM host               | Membatasi pertumbuhan, bukan memaksa shrink             |
-| reclaim bytes | ≤ 25% memory.current                               | Per cgroup, bukan global                                |
-| TTL           | ≤ 15 menit                                         | Rollback otomatis saat TTL habis atau incident RESOLVED |
+| Field         | Aturan                                             | Catatan                                                                 |
+| ------------- | -------------------------------------------------- | ----------------------------------------------------------------------- |
+| jenis         | cgroup_throttle / cgroup_reclaim / admission_close | Semua reversible                                                        |
+| MemoryHigh    | ≥ pemakaian saat ini, ≤ 95% RAM host               | Membatasi pertumbuhan, bukan memaksa shrink                             |
+| CPUQuota      | Opsional kuota CPU; baseline unset → `CPUQuota=`   | Saat rollback baseline unset, kirim `CPUQuota=` (bukan `infinity`)      |
+| reclaim bytes | ≤ 25% memory.current                               | Per cgroup, bukan global                                                |
+| TTL           | ≤ 15 menit                                         | Rollback otomatis; kegagalan dicoba ulang via exponential backoff       |
 
 ## 3. Tabel Transisi Status
 
@@ -127,7 +128,7 @@ flowchart TD
 | —       | APPLIED             | Detector P1/P2 dan policy mengizinkan |
 | APPLIED | ROLLED_BACK         | Incident RESOLVED                     |
 | APPLIED | EXPIRED_ROLLED_BACK | TTL habis                             |
-| APPLIED | FAILED_ROLLBACK     | Rollback gagal → alert manusia        |
+| APPLIED | FAILED_ROLLBACK     | Gagal rollback melampaui batas retry (5x backoff) → eskalasi & alert manusia |
 
 ### 3.4 Node
 
