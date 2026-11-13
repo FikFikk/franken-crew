@@ -59,3 +59,23 @@ func TestCLI_KeysInitCommand(t *testing.T) {
 	}
 }
 
+func TestCLI_MCPServeSecurityChecks(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	// Tanpa bearer token pada env var wajib menolak startup (exit code 1)
+	t.Setenv("FRANKEN_TEST_EMPTY_TOKEN", "")
+	code := run([]string{"mcp", "serve", "--token-env", "FRANKEN_TEST_EMPTY_TOKEN"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit code 1 when bearer token is empty, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	// Alamat bind wildcard 0.0.0.0 wajib ditolak sebelum membuka socket
+	stdout.Reset()
+	stderr.Reset()
+	t.Setenv("FRANKEN_TEST_TOKEN", "valid-test-bearer")
+	code = run([]string{"mcp", "serve", "--token-env", "FRANKEN_TEST_TOKEN", "--listen", "0.0.0.0:8090"}, &stdout, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "unsafe bind address") {
+		t.Fatalf("expected exit code 1 with unsafe bind address error, got %d (stderr=%s)", code, stderr.String())
+	}
+}
+

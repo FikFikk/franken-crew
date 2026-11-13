@@ -136,29 +136,180 @@ func (s *Store) CreateIncident(ctx context.Context, inc *Incident) error {
 	return nil
 }
 
+// rowScanner mengabstraksikan sql.Row dan sql.Rows untuk menghindari duplikasi pemindaian kolom insiden.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanIncident(sc rowScanner) (Incident, error) {
+	var inc Incident
+	var stateStr string
+	err := sc.Scan(
+		&inc.ID, &inc.Node, &inc.Cgroup, &inc.Severity, &stateStr,
+		&inc.TTOSeconds, &inc.OpenedAt, &inc.UpdatedAt, &inc.ClosedAt,
+		&inc.TriageJSON, &inc.PlanJSON,
+	)
+	if err != nil {
+		return Incident{}, err
+	}
+	inc.State = State(stateStr)
+	return inc, nil
+}
+
 // GetIncident mengambil data insiden berdasarkan ID.
 func (s *Store) GetIncident(ctx context.Context, id string) (*Incident, error) {
 	query := `
 	SELECT id, node, cgroup, severity, state, tto_seconds, opened_at, updated_at, closed_at, triage_json, plan_json
 	FROM incidents WHERE id = ?;
 	`
-	row := s.db.QueryRowContext(ctx, query, id)
-
-	var inc Incident
-	var stateStr string
-	err := row.Scan(
-		&inc.ID, &inc.Node, &inc.Cgroup, &inc.Severity, &stateStr,
-		&inc.TTOSeconds, &inc.OpenedAt, &inc.UpdatedAt, &inc.ClosedAt,
-		&inc.TriageJSON, &inc.PlanJSON,
-	)
+	inc, err := scanIncident(s.db.QueryRowContext(ctx, query, id))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrIncidentNotFound
 		}
 		return nil, fmt.Errorf("query incident %s: %w", id, err)
 	}
-	inc.State = State(stateStr)
 	return &inc, nil
+}
+
+// ListIncidents mengembalikan daftar insiden terbaru dengan filter status dan batas jumlah opsional.
+func (s *Store) ListIncidents(ctx context.Context, stateFilter string, limit int) ([]Incident, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	var rows *sql.Rows
+	var err error
+	if stateFilter != "" {
+		rows, err = s.db.QueryContext(ctx, `
+		SELECT id, node, cgroup, severity, state, tto_seconds, opened_at, updated_at, closed_at, triage_json, plan_json
+		FROM incidents WHERE state = ? ORDER BY opened_at DESC, id DESC LIMIT ?;
+		`, stateFilter, limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `
+		SELECT id, node, cgroup, severity, state, tto_seconds, opened_at, updated_at, closed_at, triage_json, plan_json
+		FROM incidents ORDER BY opened_at DESC, id DESC LIMIT ?;
+		`, limit)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list incidents: %w", err)
+	}
+	defer rows.Close()
+
+	var list []Incident
+	for rows.Next() {
+		inc, scanErr := scanIncident(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan incident row: %w", scanErr)
+		}
+		list = append(list, inc)
+	}
+	return list, rows.Err()
+}
+
+// ClaimIncident mengklaim insiden terbuka secara atomik menjadi TRIAGING untuk mencegah eksekusi ganda.
+func (s *Store) ClaimIncident(ctx context.Context, incidentID, claimer string) (*Incident, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin claim tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var inc Incident
+	if incidentID != "" {
+		inc, err = scanIncident(tx.QueryRowContext(ctx, `
+		SELECT id, node, cgroup, severity, state, tto_seconds, opened_at, updated_at, closed_at, triage_json, plan_json
+		FROM incidents WHERE id = ?;
+		`, incidentID))
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, ErrIncidentNotFound
+			}
+			return nil, fmt.Errorf("query claim target %s: %w", incidentID, err)
+		}
+		if inc.State != StateDetected && inc.State != StateReflexApplied {
+			return nil, nil
+		}
+	} else {
+		inc, err = scanIncident(tx.QueryRowContext(ctx, `
+		SELECT id, node, cgroup, severity, state, tto_seconds, opened_at, updated_at, closed_at, triage_json, plan_json
+		FROM incidents
+		WHERE state IN (?, ?)
+		ORDER BY opened_at ASC, id ASC
+		LIMIT 1;
+		`, string(StateDetected), string(StateReflexApplied)))
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("query oldest claimable incident: %w", err)
+		}
+	}
+
+	now := time.Now().UTC()
+	res, err := tx.ExecContext(ctx, `
+	UPDATE incidents SET state = ?, updated_at = ?
+	WHERE id = ? AND state IN (?, ?);
+	`, string(StateTriaging), now, inc.ID, string(StateDetected), string(StateReflexApplied))
+	if err != nil {
+		return nil, fmt.Errorf("update claimed incident %s: %w", inc.ID, err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("claim rows affected %s: %w", inc.ID, err)
+	}
+	if affected == 0 {
+		return nil, nil
+	}
+
+	payload := fmt.Sprintf(`{"from":%q,"to":%q,"claimer":%q}`, inc.State, StateTriaging, claimer)
+	if _, err := tx.ExecContext(ctx, `
+	INSERT INTO audit_trail (incident_id, actor, event_type, payload_json, created_at)
+	VALUES (?, ?, ?, ?, ?);
+	`, inc.ID, claimer, "INCIDENT_CLAIMED", payload, now); err != nil {
+		return nil, fmt.Errorf("audit claim %s: %w", inc.ID, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit claim %s: %w", inc.ID, err)
+	}
+
+	inc.State = StateTriaging
+	inc.UpdatedAt = now
+	return &inc, nil
+}
+
+// SavePlan menyimpan payload JSON rencana mitigasi tervalidasi pada rekaman insiden.
+func (s *Store) SavePlan(ctx context.Context, incidentID, planJSON string) error {
+	now := time.Now().UTC()
+	res, err := s.db.ExecContext(ctx, `
+	UPDATE incidents SET plan_json = ?, updated_at = ? WHERE id = ?;
+	`, planJSON, now, incidentID)
+	if err != nil {
+		return fmt.Errorf("save plan for %s: %w", incidentID, err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("save plan rows affected %s: %w", incidentID, err)
+	}
+	if affected == 0 {
+		return ErrIncidentNotFound
+	}
+	return nil
+}
+
+// CountAuditByEvent menghitung jumlah kemunculan tipe event audit tertentu pada satu insiden.
+func (s *Store) CountAuditByEvent(ctx context.Context, incidentID, eventType string) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `
+	SELECT COUNT(*) FROM audit_trail WHERE incident_id = ? AND event_type = ?;
+	`, incidentID, eventType).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count audit %s/%s: %w", incidentID, eventType, err)
+	}
+	return count, nil
 }
 
 // TransitionState mengubah status insiden secara aman dengan memeriksa aturan state machine.

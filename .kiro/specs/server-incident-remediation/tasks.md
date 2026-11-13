@@ -44,10 +44,10 @@
   - [x] 7.3 Property test P2
   - _Requirements: 7.2, 8.2_
 
-- [ ] 8. Sentinel MCP server
-  - [ ] 8.1 Read tools: `node_snapshot`, `incident_list`, `incident_get`, `incident_claim`, `psi_history`, `cgroup_top`, `journal_tail`, `process_tree`, `zombie_report`
-  - [ ] 8.2 Write tools: `plan_submit`, `action_execute`, `action_rollback`, `incident_transition`, `verify_health`
-  - [ ] 8.3 Streamable HTTP bound to the Tailscale interface with bearer auth; `/healthz`, `/v1/events` SSE
+- [x] 8. Sentinel MCP server
+  - [x] 8.1 Read tools: `node_snapshot`, `incident_list`, `incident_get`, `incident_claim`, `psi_history`, `cgroup_top`, `journal_tail`, `process_tree`, `zombie_report`
+  - [x] 8.2 Write tools: `plan_submit`, `action_execute`, `action_rollback`, `incident_transition`, `verify_health`
+  - [x] 8.3 Streamable HTTP bound to the Tailscale interface with bearer auth; `/healthz`, `/v1/events` SSE
   - _Requirements: 4, 6.3, 8, 9_
 
 - [ ] 9. wa-bridge

@@ -23,6 +23,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "keys":
 		return runKeys(args[1:], stdout, stderr)
+	case "mcp":
+		return runMCP(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
 		printRootUsage(stdout)
 		return 0
@@ -86,6 +88,7 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  keys    Manage Ed25519 approval keys")
+	fmt.Fprintln(w, "  mcp     Run Sentinel MCP server (serve HTTP/SSE or stdio JSON-RPC)")
 }
 
 func printKeysUsage(w io.Writer) {

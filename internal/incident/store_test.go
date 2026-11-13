@@ -208,3 +208,50 @@ func TestStore_ReflexAndAuditTrail(t *testing.T) {
 	}
 }
 
+func TestStore_ListClaimAndPlan(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "claim_test.db"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	_ = store.CreateIncident(ctx, &Incident{
+		ID: "INC-1", Node: "pi01", Cgroup: "/a.service", Severity: "P2", State: StateDetected, OpenedAt: now.Add(-2 * time.Minute),
+	})
+	_ = store.CreateIncident(ctx, &Incident{
+		ID: "INC-2", Node: "pi01", Cgroup: "/b.service", Severity: "P1", State: StateReflexApplied, OpenedAt: now.Add(-1 * time.Minute),
+	})
+
+	// Klaim otomatis terlama wajib mengembalikan INC-1 dan mengubah state menjadi TRIAGING
+	claimed, err := store.ClaimIncident(ctx, "", "franken-sentry")
+	if err != nil || claimed == nil || claimed.ID != "INC-1" || claimed.State != StateTriaging {
+		t.Fatalf("expected INC-1 claimed in TRIAGING state, got %+v (err=%v)", claimed, err)
+	}
+
+	// Klaim ulang target yang sama harus mengembalikan nil agar tidak terjadi race condition
+	doubleClaim, err := store.ClaimIncident(ctx, "INC-1", "other-worker")
+	if err != nil || doubleClaim != nil {
+		t.Fatalf("expected nil on duplicate claim, got %+v (err=%v)", doubleClaim, err)
+	}
+
+	list, err := store.ListIncidents(ctx, string(StateTriaging), 10)
+	if err != nil || len(list) != 1 || list[0].ID != "INC-1" {
+		t.Fatalf("unexpected filtered list: %+v (err=%v)", list, err)
+	}
+
+	if err := store.SavePlan(ctx, "INC-1", `{"incident_id":"INC-1"}`); err != nil {
+		t.Fatalf("SavePlan failed: %v", err)
+	}
+	updated, _ := store.GetIncident(ctx, "INC-1")
+	if updated.PlanJSON == "" {
+		t.Fatal("expected PlanJSON persisted")
+	}
+
+	claimCount, err := store.CountAuditByEvent(ctx, "INC-1", "INCIDENT_CLAIMED")
+	if err != nil || claimCount != 1 {
+		t.Fatalf("expected 1 INCIDENT_CLAIMED audit entry, got %d (err=%v)", claimCount, err)
+	}
+}
+
