@@ -138,6 +138,23 @@ func (rb *PSIRingBuffer) Query(cgroupKey string, minutes int, now time.Time) []P
 	return out
 }
 
+// Window mengambil salinan titik untuk key cgroup dengan from <= At <= to, sesuai urutan perekaman.
+func (rb *PSIRingBuffer) Window(cgroupKey string, from, to time.Time) []PSIPoint {
+	key := normalizePSIKey(cgroupKey)
+
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
+
+	var out []PSIPoint
+	for _, pt := range rb.series[key] {
+		if pt.At.Before(from) || pt.At.After(to) {
+			continue
+		}
+		out = append(out, pt)
+	}
+	return out
+}
+
 // CommandRunner mengabstraksikan eksekusi biner allowlist tanpa shell milik `executor.Executor`.
 type CommandRunner interface {
 	Execute(ctx context.Context, binary string, args []string, timeout time.Duration) (*executor.Result, error)

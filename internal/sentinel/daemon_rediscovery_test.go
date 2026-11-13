@@ -176,11 +176,14 @@ func newRediscoveryHarness(t *testing.T, mfs *kernelfs.MemFS, cgroupPaths []stri
 		SampleInterval:     sampleInterval,
 		RollbackInterval:   50 * time.Millisecond,
 		RediscoverInterval: rediscoveryTestInterval,
-		Store:              store,
-		Catalog:            cat,
-		Reflex:             eng,
-		MCPServer:          srv,
-		Clock:              func() time.Time { return h.now },
+		// Harness ini menghitung setiap evaluasi lewat titik ring di bawah jam beku, jadi throttle ring 500 ms
+		// (yang diuji terpisah di TestDaemon_ThrottlesFastPathRingWrites) dimatikan di sini.
+		RingWriteInterval: -1,
+		Store:             store,
+		Catalog:           cat,
+		Reflex:            eng,
+		MCPServer:         srv,
+		Clock:             func() time.Time { return h.now },
 	})
 	if err != nil {
 		t.Fatalf("sentinel.New: %v", err)

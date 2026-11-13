@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -37,11 +36,9 @@ const (
 	MaxMessagesPerHourPerNode = 20
 
 	// Label pilihan sekunder standar pada Native WhatsApp Poll (opsi L2 dibangun deterministik dari plan Sentinel).
-	OptionRollbackReflex = "Rollback Reflex"
-	OptionDismiss        = "Dismiss"
-
-	// maxPollOptionLabelLen membatasi panjang label opsi WhatsApp Poll agar tetap terbaca utuh beserta hash plan.
-	maxPollOptionLabelLen = 96
+	// Nilainya bersumber dari internal/policy agar replay dashboard memakai teks yang sama persis.
+	OptionRollbackReflex = policy.PollOptionRollbackReflex
+	OptionDismiss        = policy.PollOptionDismiss
 )
 
 var (
@@ -378,7 +375,7 @@ func (b *Bridge) HandleSSEEvent(ctx context.Context, ev mcpserver.StreamEvent) {
 	}
 
 	// Kirim notifikasi insiden kritis pertama secepat mungkin (< 2 detik) tanpa membuat poll otonom
-	firstAlert := formatCriticalAlertMessage(b.nodeName(), ev)
+	firstAlert := FormatCriticalAlertMessage(b.nodeName(), ev)
 	if _, err := b.sendRateLimitedText(ctx, ev.IncidentID, b.targetJID, firstAlert); err != nil {
 		b.audit("FIRST_ALERT_ERROR", fmt.Sprintf("incident=%s err=%v", ev.IncidentID, err))
 	} else {
@@ -435,18 +432,7 @@ func (b *Bridge) sendFinalReport(ctx context.Context, ev mcpserver.StreamEvent) 
 		return
 	}
 
-	status := extractAnyString(ev.Data, "status")
-	lines := []string{fmt.Sprintf("[REPORT] *%s* %s (verification %s)", incID, ev.State, status)}
-	if rolled, ok := ev.Data["rolled_back"]; ok {
-		lines = append(lines, fmt.Sprintf("L1 reflexes rolled back: %v", rolled))
-	}
-	if reasons := extractAnyString(ev.Data, "failure_reasons"); reasons != "" {
-		lines = append(lines, "Reasons: "+reasons)
-	}
-	if pm := extractAnyString(ev.Data, "postmortem_path"); pm != "" {
-		lines = append(lines, "Postmortem: "+pm)
-	}
-	if _, err := b.sendRateLimitedText(ctx, incID, b.targetJID, strings.Join(lines, "\n")); err != nil {
+	if _, err := b.sendRateLimitedText(ctx, incID, b.targetJID, FormatFinalReport(ev)); err != nil {
 		b.audit("FINAL_REPORT_ERROR", fmt.Sprintf("incident=%s err=%v", incID, err))
 		return
 	}
@@ -544,7 +530,7 @@ func (b *Bridge) SendApprovalPoll(ctx context.Context, req PollRequest) (*Pendin
 		}
 	}
 	if len(reqHash) != len(canonicalHash) || subtle.ConstantTimeCompare([]byte(reqHash), []byte(canonicalHash)) != 1 {
-		b.audit("POLL_PLAN_HASH_MISMATCH", fmt.Sprintf("incident=%s requested=%s stored=%s", incID, shortHash(reqHash), shortHash(canonicalHash)))
+		b.audit("POLL_PLAN_HASH_MISMATCH", fmt.Sprintf("incident=%s requested=%s stored=%s", incID, policy.ShortPlanHash(reqHash), policy.ShortPlanHash(canonicalHash)))
 		return nil, fmt.Errorf("%w (incident=%s)", ErrPlanHashMismatch, incID)
 	}
 
@@ -576,7 +562,7 @@ func (b *Bridge) SendApprovalPoll(ctx context.Context, req PollRequest) (*Pendin
 		}
 		seenOptIDs[optID] = true
 
-		lbl := formatPlanOptionLabel(opt, canonicalHash)
+		lbl := policy.FormatOptionLabel(opt, canonicalHash)
 		hashHex := HashPollOption(lbl)
 		if seenHashes[hashHex] {
 			return nil, fmt.Errorf("wabridge: duplicate option hash generated for option %s", optID)
@@ -614,8 +600,7 @@ func (b *Bridge) SendApprovalPoll(ctx context.Context, req PollRequest) (*Pendin
 	}
 
 	shortCode := randomShortCode()
-	title := fmt.Sprintf("[%s] %s (plan %s) — Choose action or reply APPROVE <OPT> %s / ROLLBACK %s / DISMISS %s",
-		shortCode, incID, shortHash(canonicalHash), shortCode, shortCode, shortCode)
+	title := FormatPollTitle(shortCode, incID, canonicalHash)
 
 	if err := b.reserveQuota(incID); err != nil {
 		return nil, err
@@ -662,7 +647,7 @@ func (b *Bridge) SendApprovalPoll(ctx context.Context, req PollRequest) (*Pendin
 		_, _ = b.cfg.Sentinel.IncidentTransition(ctx, mcpserver.IncidentTransitionInput{
 			IncidentID: incID,
 			To:         string(incident.StateWaitingApproval),
-			Reason:     fmt.Sprintf("WhatsApp approval poll %s sent for plan %s", poll.ApprovalID, shortHash(canonicalHash)),
+			Reason:     FormatPollSentReason(poll.ApprovalID, canonicalHash),
 			Actor:      "wa-bridge",
 		})
 	}
@@ -948,7 +933,7 @@ func (b *Bridge) approveAndMintToken(ctx context.Context, poll *PendingPoll, cho
 	}
 	// Tolak suara bila plan pada Sentinel berubah sejak poll dikirimkan ke admin
 	if len(currentPlanHash) != len(poll.PlanHash) || subtle.ConstantTimeCompare([]byte(currentPlanHash), []byte(poll.PlanHash)) != 1 {
-		b.audit("VOTE_PLAN_HASH_MISMATCH", fmt.Sprintf("incident=%s poll_hash=%s stored_hash=%s", poll.IncidentID, shortHash(poll.PlanHash), shortHash(currentPlanHash)))
+		b.audit("VOTE_PLAN_HASH_MISMATCH", fmt.Sprintf("incident=%s poll_hash=%s stored_hash=%s", poll.IncidentID, policy.ShortPlanHash(poll.PlanHash), policy.ShortPlanHash(currentPlanHash)))
 		return nil, ErrPlanHashMismatch
 	}
 
@@ -1011,10 +996,9 @@ func (b *Bridge) approveAndMintToken(ctx context.Context, poll *PendingPoll, cho
 	}
 
 	b.audit("APPROVAL_TOKEN_MINTED", fmt.Sprintf("incident=%s option=%s steps=%v tokens=%d plan=%s",
-		poll.IncidentID, matchedOpt.ID, stepIDs, len(stepTokens), shortHash(currentPlanHash)))
+		poll.IncidentID, matchedOpt.ID, stepIDs, len(stepTokens), policy.ShortPlanHash(currentPlanHash)))
 
-	summary := fmt.Sprintf("Approved option %s (%s) for %s [plan %s]; %d single-use Ed25519 step token(s) issued to Franken-Remediator.",
-		matchedOpt.ID, formatStepsSummary(matchedOpt.Steps), poll.IncidentID, shortHash(currentPlanHash), len(stepTokens))
+	summary := FormatApprovalSummary(matchedOpt.ID, matchedOpt.Steps, poll.IncidentID, currentPlanHash, len(stepTokens))
 	return &mintedApproval{
 		PlanHash:   currentPlanHash,
 		OptionID:   matchedOpt.ID,
@@ -1190,11 +1174,7 @@ func (b *Bridge) sendRateLimitedText(ctx context.Context, incidentID string, to 
 	if err := b.reserveQuota(incidentID); err != nil {
 		return "", err
 	}
-	redacted := redact.String(text)
-	if len(redacted) > 700 {
-		redacted = redacted[:697] + "..."
-	}
-	msgID, err := b.cfg.Messenger.SendText(ctx, to, redacted)
+	msgID, err := b.cfg.Messenger.SendText(ctx, to, OutgoingText(text))
 	if err != nil {
 		return "", err
 	}
@@ -1235,72 +1215,6 @@ func isAlertableSeverity(sev string) bool {
 	}
 }
 
-// formatPlanOptionLabel menyusun label opsi poll langsung dari aksi & target plan Sentinel beserta 8 karakter hash plan.
-func formatPlanOptionLabel(opt policy.PlanOption, planHash string) string {
-	hashTag := shortHash(planHash)
-	prefix := fmt.Sprintf("%s: ", strings.TrimSpace(opt.ID))
-	suffix := fmt.Sprintf(" [%s]", hashTag)
-	body := redact.String(formatStepsSummary(opt.Steps))
-	if body == "" {
-		body = redact.String(strings.TrimSpace(opt.Label))
-	}
-	maxBody := maxPollOptionLabelLen - len(prefix) - len(suffix)
-	if maxBody > 3 && len(body) > maxBody {
-		body = strings.TrimSpace(body[:maxBody-3]) + "..."
-	}
-	return prefix + body + suffix
-}
-
-func formatStepsSummary(steps []policy.PlanStep) string {
-	if len(steps) == 0 {
-		return ""
-	}
-	parts := make([]string, 0, len(steps))
-	for _, st := range steps {
-		parts = append(parts, formatStepTarget(st))
-	}
-	return strings.Join(parts, " + ")
-}
-
-func formatStepTarget(st policy.PlanStep) string {
-	action := strings.TrimSpace(st.Action)
-	if len(st.Params) == 0 {
-		return action
-	}
-
-	if unit, ok := st.Params["unit"].(string); ok && strings.TrimSpace(unit) != "" {
-		return action + " " + strings.TrimSpace(unit)
-	}
-	if app, ok := st.Params["app"].(string); ok && strings.TrimSpace(app) != "" {
-		// Tampilkan worker PM2 yang akan di-restart agar manusia tahu persis instans mana yang disetujui
-		if pmID, ok := st.Params["pm_id"]; ok && pmID != nil {
-			return fmt.Sprintf("%s %s pm_id=%v", action, strings.TrimSpace(app), pmID)
-		}
-		return action + " " + strings.TrimSpace(app)
-	}
-	if pidVal, ok := st.Params["pid"]; ok && pidVal != nil {
-		return fmt.Sprintf("%s pid=%v", action, pidVal)
-	}
-
-	keys := make([]string, 0, len(st.Params))
-	for k := range st.Params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	if len(keys) > 0 {
-		return fmt.Sprintf("%s %s=%v", action, keys[0], st.Params[keys[0]])
-	}
-	return action
-}
-
-func shortHash(h string) string {
-	clean := strings.TrimSpace(h)
-	if len(clean) > 8 {
-		return clean[:8]
-	}
-	return clean
-}
-
 func firstApproveOptionID(opts []PollOptionBinding) string {
 	if len(opts) == 0 {
 		return "A"
@@ -1325,7 +1239,8 @@ func deriveUnitFromCgroup(cgroupPath string) string {
 	return ""
 }
 
-func formatCriticalAlertMessage(node string, ev mcpserver.StreamEvent) string {
+// FormatCriticalAlertMessage menyusun teks alert WhatsApp pertama untuk event incident.opened atau eskalasi severity.
+func FormatCriticalAlertMessage(node string, ev mcpserver.StreamEvent) string {
 	cg := extractAnyString(ev.Data, "cgroup")
 	summary := redact.String(strings.TrimSpace(ev.Summary))
 	if summary == "" {

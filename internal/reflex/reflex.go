@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
@@ -74,6 +75,8 @@ type EngineConfig struct {
 	RollbackInitialBackoff time.Duration
 	RollbackMaxBackoff     time.Duration
 	OnRollbackEscalated    func(action incident.ReflexAction, err error)
+	// IDSource opsional menyediakan byte ID refleks (simulasi deterministik); nil memakai crypto/rand.
+	IDSource io.Reader
 }
 
 // Engine menjalankan aksi refleks L1 secara deterministik dan mengelola jadwal rollback TTL.
@@ -91,6 +94,8 @@ type Engine struct {
 	onRollbackEscalated    func(action incident.ReflexAction, err error)
 	applyMu                sync.Mutex
 	rollbackMu             sync.Mutex
+	idMu                   sync.Mutex
+	idSource               io.Reader
 }
 
 // ReclaimRequest memuat parameter untuk aksi refleks `cgroup_reclaim`.
@@ -186,6 +191,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		rollbackInitialBackoff: initBackoff,
 		rollbackMaxBackoff:     maxBackoff,
 		onRollbackEscalated:    cfg.OnRollbackEscalated,
+		idSource:               cfg.IDSource,
 	}, nil
 }
 
@@ -259,7 +265,7 @@ func (e *Engine) ApplyReclaim(ctx context.Context, req ReclaimRequest) (*inciden
 
 	now := e.clock().UTC()
 	action := &incident.ReflexAction{
-		ID:         newReflexID(),
+		ID:         e.newReflexID(),
 		IncidentID: req.IncidentID,
 		Action:     "cgroup_reclaim",
 		Target:     req.CgroupPath,
@@ -378,7 +384,7 @@ func (e *Engine) ApplyThrottle(ctx context.Context, req ThrottleRequest) (*incid
 
 	now := e.clock().UTC()
 	action := &incident.ReflexAction{
-		ID:         newReflexID(),
+		ID:         e.newReflexID(),
 		IncidentID: req.IncidentID,
 		Action:     "cgroup_throttle",
 		Target:     req.Unit,
@@ -436,7 +442,7 @@ func (e *Engine) ApplyAdmissionClose(ctx context.Context, req AdmissionRequest) 
 	})
 
 	action := &incident.ReflexAction{
-		ID:         newReflexID(),
+		ID:         e.newReflexID(),
 		IncidentID: req.IncidentID,
 		Action:     "admission_close",
 		Target:     req.App,
@@ -749,8 +755,19 @@ func (e *Engine) findActiveBaseline(ctx context.Context, actionName, target stri
 	return reflexParamsPayload{}, false, nil
 }
 
-func newReflexID() string {
+// newReflexID membuat ID refleks dari IDSource bila dikonfigurasi (simulasi deterministik), selain itu crypto/rand.
+func (e *Engine) newReflexID() string {
 	var b [6]byte
-	_, _ = rand.Read(b[:])
+	e.idMu.Lock()
+	src := e.idSource
+	ok := src != nil
+	if ok {
+		_, err := io.ReadFull(src, b[:])
+		ok = err == nil
+	}
+	e.idMu.Unlock()
+	if !ok {
+		_, _ = rand.Read(b[:])
+	}
 	return fmt.Sprintf("RFX-%s", hex.EncodeToString(b[:]))
 }

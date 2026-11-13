@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/FikFikk/franken-crew/internal/approval"
@@ -48,6 +50,8 @@ type Config struct {
 	VerifyPollInterval    time.Duration
 	// AutoPostmortem menulis postmortem secara deterministik saat verifikasi forward mencapai status final
 	AutoPostmortem bool
+	// IDSource opsional menyediakan byte ID evidence (simulasi lab deterministik); nil memakai crypto/rand
+	IDSource io.Reader
 }
 
 // Server mengimplementasikan MCP Server Sentinel melalui Streamable HTTP/SSE dan JSON-RPC stdio.
@@ -58,6 +62,10 @@ type Server struct {
 	psiRing     *PSIRingBuffer
 	startedAt   time.Time
 	verifyCoord *verifyCoordinator
+
+	// idMu melindungi pembacaan cfg.IDSource; seriesMu menjamin satu snapshot telemetry_series per insiden
+	idMu     sync.Mutex
+	seriesMu sync.Mutex
 }
 
 // HealthzResponse merepresentasikan payload JSON endpoint unauthenticated `GET /healthz`.

@@ -43,10 +43,29 @@ var (
 	validAppArgRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 )
 
+// MaxTriageSummaryChars membatasi panjang ringkasan triage Sentry yang disimpan bersama plan.
+const MaxTriageSummaryChars = 500
+
+// TriageClasses adalah daftar kelas triage tetap (steering rules.md bagian 5) yang diterima plan_submit.
+var TriageClasses = []string{
+	"heap_leak", "traffic_spike", "fork_storm", "zombie_accumulation",
+	"log_flood", "swap_thrash", "external", "unknown",
+}
+
+// PlanTriage memuat hasil klasifikasi Franken-Sentry yang diteruskan Architect bersama plan.
+// Seluruh field opsional pada level schema agar pelanggaran dilaporkan sebagai violations, bukan galat transport.
+type PlanTriage struct {
+	Class       string   `json:"class,omitempty" jsonschema:"kelas triage: heap_leak, traffic_spike, fork_storm, zombie_accumulation, log_flood, swap_thrash, external, atau unknown"`
+	Confidence  float64  `json:"confidence,omitempty" jsonschema:"keyakinan klasifikasi antara 0 dan 1"`
+	EvidenceIDs []string `json:"evidence_ids,omitempty" jsonschema:"evidence_id yang tercatat untuk insiden ini dan mendukung klasifikasi"`
+	Summary     string   `json:"summary,omitempty" jsonschema:"ringkasan triage maksimal 500 karakter (disensor sebelum disimpan)"`
+}
+
 // PlanSubmitInput memuat rencana remediasi terstruktur yang diajukan oleh Architect.
 type PlanSubmitInput struct {
 	IncidentID string      `json:"incident_id" jsonschema:"ID insiden target rencana remediasi"`
 	Plan       policy.Plan `json:"plan" jsonschema:"objek plan sesuai schema/plan.schema.json"`
+	Triage     *PlanTriage `json:"triage,omitempty" jsonschema:"opsional: triage JSON Franken-Sentry {class, confidence, evidence_ids, summary}; disimpan ke incidents.triage_json bila plan diterima"`
 }
 
 // PlanSubmitOutput mengembalikan hasil validasi kebijakan, plan_hash kanonik, dan status eskalasi jika melewati batas revisi.
@@ -265,6 +284,21 @@ func (s *Server) handlePlanSubmit(ctx context.Context, _ *mcp.CallToolRequest, i
 		res.Violations = append(res.Violations, scopeViolations...)
 	}
 
+	// Triage Sentry opsional ikut divalidasi; pelanggarannya membuat seluruh pengajuan tidak sah
+	var triageJSON string
+	if in.Triage != nil {
+		triageViolations, tErr := s.validateTriageAgainstIncident(ctx, inc, in.Triage)
+		if tErr != nil {
+			return nil, PlanSubmitOutput{}, tErr
+		}
+		if len(triageViolations) > 0 {
+			res.Valid = false
+			res.Violations = append(res.Violations, triageViolations...)
+		} else if triageJSON, err = encodeTriage(in.Triage); err != nil {
+			return nil, PlanSubmitOutput{}, err
+		}
+	}
+
 	if !res.Valid {
 		priorRejects, _ := s.cfg.Store.CountAuditByEvent(ctx, incID, "PLAN_REJECTED")
 		rejectCount := priorRejects + 1
@@ -279,6 +313,7 @@ func (s *Server) handlePlanSubmit(ctx context.Context, _ *mcp.CallToolRequest, i
 			if tErr := s.cfg.Store.TransitionState(ctx, incID, incident.StateEscalated, "policy-engine", "exceeded max plan revisions (2)"); tErr == nil {
 				escalated = true
 				curState = incident.StateEscalated
+				s.snapshotSeriesIfTerminal(ctx, incID, curState)
 				s.broker.Publish(StreamEvent{
 					Type:       "incident.updated",
 					IncidentID: incID,
@@ -305,7 +340,7 @@ func (s *Server) handlePlanSubmit(ctx context.Context, _ *mcp.CallToolRequest, i
 	if err != nil {
 		return nil, PlanSubmitOutput{}, err
 	}
-	if err := s.cfg.Store.SavePlan(ctx, incID, string(canonicalBytes)); err != nil {
+	if err := s.cfg.Store.SavePlanWithTriage(ctx, incID, string(canonicalBytes), triageJSON); err != nil {
 		return nil, PlanSubmitOutput{}, err
 	}
 	_ = s.cfg.Store.RecordAudit(ctx, incID, "architect", "PLAN_ACCEPTED", fmt.Sprintf(`{"plan_hash":%q}`, res.PlanHash))
@@ -445,8 +480,9 @@ func (s *Server) handleActionExecute(ctx context.Context, _ *mcp.CallToolRequest
 			_ = s.cfg.Store.RecordAudit(ctx, incID, "sentinel", "ACTION_TOKEN_REJECTED", fmt.Sprintf(`{"step_id":%q,"action":%q,"error":%q}`, stepID, actionName, vErr.Error()))
 			return nil, ActionExecuteOutput{}, fmt.Errorf("approval token rejected: %w", vErr)
 		}
+		// issued_at (iat token) adalah saat wa-bridge mencetak token setelah vote manusia; bridge tidak menulis vote ke Sentinel
 		_ = s.cfg.Store.RecordAudit(ctx, incID, "sentinel", "ACTION_TOKEN_VERIFIED",
-			fmt.Sprintf(`{"step_id":%q,"action":%q,"nonce":%q,"approver_hash":%q}`, stepID, actionName, claims.Nonce, claims.ApproverHash))
+			fmt.Sprintf(`{"step_id":%q,"action":%q,"nonce":%q,"approver_hash":%q,"issued_at":%d}`, stepID, actionName, claims.Nonce, claims.ApproverHash, claims.IssuedAt))
 	}
 
 	// Gunakan context.WithoutCancel agar eksekusi tetap selesai & tercatat jika client MCP putus di tengah jalan
@@ -657,7 +693,9 @@ func (s *Server) handleL2Timeout(ctx context.Context, inc *incident.Incident, st
 	_ = s.cfg.Store.RecordAudit(ctx, inc.ID, "remediator", "ACTION_TIMEOUT",
 		fmt.Sprintf(`{"step_id":%q,"action":%q,"binary":%q,"duration_ms":%d,"stderr":%q}`, stepID, actionName, binary, durMs, stderrRedacted))
 	if incident.CanTransition(curState, incident.StateEscalated) {
-		_ = s.cfg.Store.TransitionState(ctx, inc.ID, incident.StateEscalated, "sentinel", "command timeout on "+actionName)
+		if tErr := s.cfg.Store.TransitionState(ctx, inc.ID, incident.StateEscalated, "sentinel", "command timeout on "+actionName); tErr == nil {
+			s.snapshotSeriesIfTerminal(ctx, inc.ID, incident.StateEscalated)
+		}
 		curState = incident.StateEscalated
 	}
 	s.broker.Publish(StreamEvent{
@@ -690,7 +728,9 @@ func (s *Server) handleL2Failure(ctx context.Context, inc *incident.Incident, st
 	_ = s.cfg.Store.RecordAudit(ctx, inc.ID, "remediator", "ACTION_FAILED",
 		fmt.Sprintf(`{"step_id":%q,"action":%q,"exit_code":%d,"duration_ms":%d,"stderr":%q}`, stepID, actionName, exitCode, durMs, errMsg))
 	if incident.CanTransition(curState, incident.StateEscalated) {
-		_ = s.cfg.Store.TransitionState(ctx, inc.ID, incident.StateEscalated, "sentinel", "action failed: "+actionName)
+		if tErr := s.cfg.Store.TransitionState(ctx, inc.ID, incident.StateEscalated, "sentinel", "action failed: "+actionName); tErr == nil {
+			s.snapshotSeriesIfTerminal(ctx, inc.ID, incident.StateEscalated)
+		}
 		curState = incident.StateEscalated
 	}
 	s.broker.Publish(StreamEvent{
@@ -864,6 +904,7 @@ func (s *Server) handleIncidentTransition(ctx context.Context, _ *mcp.CallToolRe
 	if err := s.cfg.Store.TransitionState(ctx, incID, target, actor, reason); err != nil {
 		return nil, IncidentTransitionOutput{}, err
 	}
+	s.snapshotSeriesIfTerminal(ctx, incID, target)
 	inc, err := s.cfg.Store.GetIncident(ctx, incID)
 	if err == nil {
 		s.broker.Publish(StreamEvent{

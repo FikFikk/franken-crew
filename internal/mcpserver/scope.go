@@ -2,15 +2,21 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/FikFikk/franken-crew/internal/incident"
 	"github.com/FikFikk/franken-crew/internal/policy"
+	"github.com/FikFikk/franken-crew/internal/postmortem"
+	"github.com/FikFikk/franken-crew/internal/redact"
 )
 
 // ErrTargetOutOfScope dikembalikan jika target sebuah langkah berada di luar cgroup insiden yang sedang ditangani.
@@ -45,6 +51,57 @@ func (s *Server) validatePlanAgainstIncident(ctx context.Context, inc *incident.
 		}
 	}
 	return violations, nil
+}
+
+// validateTriageAgainstIncident memeriksa triage Sentry: kelas dari daftar tetap, confidence 0..1, ringkasan
+// maksimal 500 karakter, dan setiap evidence_id tercatat untuk insiden ini.
+func (s *Server) validateTriageAgainstIncident(ctx context.Context, inc *incident.Incident, t *PlanTriage) ([]string, error) {
+	var violations []string
+	class := strings.TrimSpace(t.Class)
+	if !slices.Contains(TriageClasses, class) {
+		violations = append(violations, fmt.Sprintf("triage class %q is not one of %s", redact.String(class), strings.Join(TriageClasses, ", ")))
+	}
+	if math.IsNaN(t.Confidence) || t.Confidence < 0 || t.Confidence > 1 {
+		violations = append(violations, fmt.Sprintf("triage confidence %v must be between 0 and 1", t.Confidence))
+	}
+	if n := utf8.RuneCountInString(strings.TrimSpace(t.Summary)); n > MaxTriageSummaryChars {
+		violations = append(violations, fmt.Sprintf("triage summary has %d characters (max %d)", n, MaxTriageSummaryChars))
+	}
+
+	if len(t.EvidenceIDs) > 0 {
+		evidence, err := s.cfg.Store.GetEvidenceByIncident(ctx, inc.ID)
+		if err != nil {
+			return nil, fmt.Errorf("load evidence for %s: %w", inc.ID, err)
+		}
+		known := make(map[string]bool, len(evidence))
+		for _, ev := range evidence {
+			known[ev.ID] = true
+		}
+		for _, evID := range t.EvidenceIDs {
+			if !known[strings.TrimSpace(evID)] {
+				violations = append(violations, fmt.Sprintf("triage evidence_id %q is not recorded for incident %s", redact.String(evID), inc.ID))
+			}
+		}
+	}
+	return violations, nil
+}
+
+// encodeTriage menyusun triage_json kanonik (format postmortem.TriageSummary) dengan ringkasan tersensor.
+func encodeTriage(t *PlanTriage) (string, error) {
+	ids := make([]string, 0, len(t.EvidenceIDs))
+	for _, id := range t.EvidenceIDs {
+		ids = append(ids, strings.TrimSpace(id))
+	}
+	raw, err := json.Marshal(postmortem.TriageSummary{
+		Class:       strings.TrimSpace(t.Class),
+		Confidence:  t.Confidence,
+		EvidenceIDs: ids,
+		Summary:     redact.String(strings.TrimSpace(t.Summary)),
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode triage: %w", err)
+	}
+	return string(raw), nil
 }
 
 // checkStepTargetScope menolak target langkah yang tidak termasuk cgroup insiden. Pemeriksaan ini dijalankan

@@ -61,6 +61,15 @@ type Catalog struct {
 	actionMap      map[string]ActionDef
 	unitMap        map[string]bool
 	pidMap         map[int]bool
+	// procReader opsional menggantikan os.ReadFile saat IsProtectedPID membaca /proc/<pid> (fixture simulasi)
+	procReader func(string) ([]byte, error)
+}
+
+// SetProcReader memasang pembaca /proc alternatif untuk IsProtectedPID dan ValidatePlan, misalnya MemFS fixture
+// simulasi, agar keputusan proteksi PID tidak bergantung pada proses milik host yang menjalankan simulasi.
+// Panggil sebelum Catalog dipakai bersama; nil mengembalikan pembacaan /proc host.
+func (c *Catalog) SetProcReader(readFile func(string) ([]byte, error)) {
+	c.procReader = readFile
 }
 
 // PlanStep mendefinisikan satu langkah mitigasi
@@ -184,6 +193,9 @@ func (c *Catalog) IsProtectedPIDWithReader(pid int, readFile func(string) ([]byt
 	}
 	if c != nil && c.pidMap[pid] {
 		return true
+	}
+	if readFile == nil && c != nil && c.procReader != nil {
+		readFile = c.procReader
 	}
 	if readFile == nil {
 		if pid == os.Getpid() {
