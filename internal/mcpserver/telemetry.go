@@ -51,12 +51,15 @@ type PSIPoint struct {
 	FullAvg60     float64   `json:"full_avg60"`
 	FullAvg300    float64   `json:"full_avg300"`
 	MemoryCurrent uint64    `json:"memory_current_bytes,omitempty"`
+	// Nomor urut internal monolitik untuk membedakan titik pra vs pasca remediasi saat clock identik
+	seq uint64
 }
 
 // PSIRingBuffer menyimpan histori metrik PSI berkapasitas tetap di memori untuk tool `psi_history` dan `verify_health`.
 type PSIRingBuffer struct {
 	mu     sync.RWMutex
 	maxLen int
+	seq    uint64
 	series map[string][]PSIPoint
 }
 
@@ -80,6 +83,13 @@ func normalizePSIKey(cgroupName string) string {
 	return cleaned
 }
 
+// CurrentSeq mengembalikan nomor urut sampel PSI terakhir untuk menandai batas observasi forward.
+func (rb *PSIRingBuffer) CurrentSeq() uint64 {
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
+	return rb.seq
+}
+
 // Record menambahkan satu titik sampel PSI untuk key cgroup atau "host".
 func (rb *PSIRingBuffer) Record(cgroupKey string, pt PSIPoint) {
 	if pt.At.IsZero() {
@@ -89,6 +99,9 @@ func (rb *PSIRingBuffer) Record(cgroupKey string, pt PSIPoint) {
 
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
+
+	rb.seq++
+	pt.seq = rb.seq
 
 	buf := append(rb.series[key], pt)
 	if len(buf) > rb.maxLen {
@@ -219,25 +232,34 @@ type LoopbackHTTPProber struct {
 	Client *http.Client
 }
 
-// Probe memeriksa kode status HTTP 2xx-3xx pada URL loopback lokal.
-func (p *LoopbackHTTPProber) Probe(ctx context.Context, rawURL string) (int, error) {
+// ValidateLoopbackProbeURL memvalidasi bahwa URL health probe hanya menuju loopback lokal (anti-SSRF).
+func ValidateLoopbackProbeURL(rawURL string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return 0, fmt.Errorf("%w: invalid scheme", ErrInvalidProbeURL)
+		return "", fmt.Errorf("%w: invalid scheme", ErrInvalidProbeURL)
 	}
 	host := u.Hostname()
 	if !strings.EqualFold(host, "localhost") {
 		addr, parseErr := netip.ParseAddr(host)
 		if parseErr != nil || !addr.IsLoopback() {
-			return 0, fmt.Errorf("%w: host %q is not loopback", ErrInvalidProbeURL, host)
+			return "", fmt.Errorf("%w: host %q is not loopback", ErrInvalidProbeURL, host)
 		}
+	}
+	return u.String(), nil
+}
+
+// Probe memeriksa kode status HTTP 2xx-3xx pada URL loopback lokal.
+func (p *LoopbackHTTPProber) Probe(ctx context.Context, rawURL string) (int, error) {
+	safeURL, err := ValidateLoopbackProbeURL(rawURL)
+	if err != nil {
+		return 0, err
 	}
 
 	client := p.Client
 	if client == nil {
 		client = &http.Client{Timeout: 3 * time.Second}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, safeURL, nil)
 	if err != nil {
 		return 0, err
 	}

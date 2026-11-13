@@ -23,16 +23,17 @@ var (
 
 // AllowlistedBinaries mendefinisikan daftar path biner yang aman dan diperbolehkan dieksekusi
 var AllowlistedBinaries = map[string]bool{
-	"systemctl": true,
-	"pm2":       true,
-	"kill":      true,
-	"pkill":     true,
-	"runuser":   true,
+	"systemctl":   true,
+	"systemd-run": true,
+	"pm2":         true,
+	"kill":        true,
+	"pkill":       true,
+	"runuser":     true,
 	// Perintah utilitas pengujian lokal
-	"echo":      true,
-	"sleep":     true,
-	"true":      true,
-	"false":     true,
+	"echo":  true,
+	"sleep": true,
+	"true":  true,
+	"false": true,
 }
 
 // ProhibitedShells mendefinisikan interpreter shell yang dilarang keras untuk mencegah shell-injection
@@ -59,9 +60,13 @@ type Result struct {
 	TimedOut bool          `json:"timed_out"`
 }
 
+const defaultWaitDelay = 2 * time.Second
+
 // Executor menjalankan perintah sistem menggunakan template argv tetap tanpa melibatkan shell
 type Executor struct {
 	defaultTimeout time.Duration
+	waitDelay      time.Duration
+	allowed        map[string]bool
 }
 
 // NewExecutor membuat instance safe executor baru
@@ -69,7 +74,18 @@ func NewExecutor(defaultTimeout time.Duration) *Executor {
 	if defaultTimeout <= 0 {
 		defaultTimeout = 15 * time.Second
 	}
-	return &Executor{defaultTimeout: defaultTimeout}
+	return &Executor{
+		defaultTimeout: defaultTimeout,
+		waitDelay:      defaultWaitDelay,
+	}
+}
+
+// WithWaitDelay mengonfigurasi batas waktu tunggu penutupan pipe stdout/stderr setelah proses dibatalkan
+func (e *Executor) WithWaitDelay(d time.Duration) *Executor {
+	if d > 0 {
+		e.waitDelay = d
+	}
+	return e
 }
 
 // ExecuteTemplate memverifikasi keamanan biner dan argumen, kemudian mengeksekusinya dengan pembatasan waktu
@@ -95,7 +111,7 @@ func (e *Executor) Execute(ctx context.Context, binary string, args []string, ti
 	}
 
 	// 3. Pastikan biner ada dalam allowlist
-	if !AllowlistedBinaries[baseBinary] {
+	if !e.isAllowed(baseBinary) {
 		return nil, fmt.Errorf("%w: %q", ErrUnapprovedBinary, binary)
 	}
 
@@ -109,6 +125,16 @@ func (e *Executor) Execute(ctx context.Context, binary string, args []string, ti
 	cmd := exec.CommandContext(execCtx, binary, args...)
 	// Konfigurasikan process-group agar seluruh anak proses terbunuh jika timeout
 	setupProcessGroup(cmd)
+	waitDelay := e.waitDelay
+	if waitDelay <= 0 {
+		waitDelay = defaultWaitDelay
+	}
+	// Putuskan pemblokiran pipe I/O setelah WaitDelay agar cucu proses tidak menggantung eksekutor
+	cmd.WaitDelay = waitDelay
+	// Matikan seluruh process-group saat konteks dibatalkan atau timeout tercapai
+	cmd.Cancel = func() error {
+		return killProcessGroup(cmd)
+	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
@@ -127,11 +153,22 @@ func (e *Executor) Execute(ctx context.Context, binary string, args []string, ti
 	}
 
 	if execCtx.Err() == context.DeadlineExceeded {
-		// Bunuh process-group secara paksa jika terjadi timeout
-		killProcessGroup(cmd)
+		// Pastikan seluruh process-group benar-benar bersih saat timeout terjadi
+		_ = killProcessGroup(cmd)
 		res.TimedOut = true
 		res.ExitCode = -1
 		return res, fmt.Errorf("%w (command %s exceeded %v)", ErrCommandTimeout, binary, timeout)
+	}
+	if errors.Is(err, exec.ErrWaitDelay) {
+		// Proses induk keluar tetapi pipe I/O tetap ditahan cucu proses melebihi WaitDelay
+		_ = killProcessGroup(cmd)
+		res.TimedOut = true
+		res.ExitCode = -1
+		return res, fmt.Errorf("%w (command %s leaked stdio pipes beyond wait delay %v)", ErrCommandTimeout, binary, waitDelay)
+	}
+	if errors.Is(execCtx.Err(), context.Canceled) {
+		res.ExitCode = -1
+		return res, fmt.Errorf("executor: command %s canceled: %w", binary, execCtx.Err())
 	}
 
 	if err != nil {
@@ -145,5 +182,12 @@ func (e *Executor) Execute(ctx context.Context, binary string, args []string, ti
 
 	res.ExitCode = 0
 	return res, nil
+}
+
+func (e *Executor) isAllowed(baseBinary string) bool {
+	if e.allowed != nil {
+		return e.allowed[baseBinary]
+	}
+	return AllowlistedBinaries[baseBinary]
 }
 

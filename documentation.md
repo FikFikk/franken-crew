@@ -107,8 +107,8 @@ flowchart TD
 | AWAITING_APPROVAL   | EXPIRED           | 10 menit tanpa vote                     |
 | EXECUTING           | VERIFYING         | Aksi selesai sukses                     |
 | EXECUTING           | ESCALATED         | Aksi gagal / timeout                    |
-| VERIFYING           | RESOLVED          | Sehat selama 120 detik                  |
-| VERIFYING           | ESCALATED         | Tidak sehat                             |
+| VERIFYING           | RESOLVED          | Sehat penuh selama jendela observasi forward 120 detik |
+| VERIFYING           | ESCALATED         | Tidak sehat pada evaluasi observasi forward    |
 
 ### 3.2 Approval
 
@@ -146,7 +146,7 @@ flowchart TD
 | Otoritas             | Aksi yang memutus koneksi, menghilangkan state, atau restart proses wajib vote manusia (L2)                            |
 | Larangan mutlak      | Raw shell, hapus file, reboot, ubah konfigurasi persisten, ubah `memory.max`, `drop_caches`, sentuh proses terlindungi |
 | Proses terlindungi   | PID 1, kernel thread, sshd, journald, logind, dbus, tailscaled, Sentinel, wa-bridge, Crew gateway                      |
-| Eksekusi berantai    | Maksimal 2 langkah L2 per satu approval; verifikasi setelah tiap langkah                                               |
+| Eksekusi berantai    | Maksimal 2 langkah L2 per satu approval; verifikasi observasi forward pasca langkah (PM2 diisolasi via unit transien; `process_terminate` SIGTERM → grace → SIGKILL) |
 | Rate limit pesan     | ≤ 6 pesan per incident, ≤ 20 pesan per jam per node                                                                    |
 | Quiet hours          | 23:00–07:00: P3 ditunda ke digest pagi; P1/P2 selalu dikirim                                                           |
 | Debounce             | Cgroup yang sama dalam 5 menit me-reopen incident lama                                                                 |

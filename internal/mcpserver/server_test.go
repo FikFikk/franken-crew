@@ -134,7 +134,21 @@ type testMCPHarness struct {
 	runner   *spyCommandRunner
 	unitInsp *spyUnitInspector
 	minter   *approval.Minter
+	clockMu  sync.Mutex
 	now      time.Time
+}
+
+func (h *testMCPHarness) Now() time.Time {
+	h.clockMu.Lock()
+	defer h.clockMu.Unlock()
+	return h.now
+}
+
+func (h *testMCPHarness) AdvanceClock(d time.Duration) time.Time {
+	h.clockMu.Lock()
+	defer h.clockMu.Unlock()
+	h.now = h.now.Add(d)
+	return h.now
 }
 
 func setupTestMCPHarness(t *testing.T) *testMCPHarness {
@@ -185,8 +199,13 @@ func setupTestMCPHarness(t *testing.T) *testMCPHarness {
 
 	mfs.SetFile("/proc/1205/stat", "1205 (sh zombie) Z 1200 1200 1200 0 -1 4194560 0 0 0 0\n")
 
-	now := time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC)
-	clockFn := func() time.Time { return now }
+	h := &testMCPHarness{
+		store:    store,
+		fs:       mfs,
+		runner:   nil,
+		now:      time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC),
+	}
+	clockFn := h.Now
 
 	kp, err := approval.GenerateKeyPair()
 	if err != nil {
@@ -258,15 +277,11 @@ func setupTestMCPHarness(t *testing.T) *testMCPHarness {
 		RawData:    "raw line from 10.1.2.3 Bearer secret_token_abcdefghijklmnop",
 	})
 
-	return &testMCPHarness{
-		srv:      srv,
-		store:    store,
-		fs:       mfs,
-		runner:   runner,
-		unitInsp: unitInsp,
-		minter:   minter,
-		now:      now,
-	}
+	h.srv = srv
+	h.runner = runner
+	h.unitInsp = unitInsp
+	h.minter = minter
+	return h
 }
 
 func connectPipeMCPClient(t *testing.T, ctx context.Context, srv *Server) (*mcp.ClientSession, func()) {
@@ -689,7 +704,9 @@ func TestMCP_WriteToolsPolicyTokenAndVerification(t *testing.T) {
 		t.Fatalf("expected replay attack rejected with IsError=true")
 	}
 
-	// 6. Uji transisi REMEDIATING -> VERIFYING, verify_health (dengan probe loopback) otomatis me-rollback refleks L1, lalu RESOLVED
+	defer h.srv.Close()
+
+	// 6. Uji transisi REMEDIATING -> VERIFYING, verify_health awal wajib PENDING_VERIFICATION lalu RESOLVED setelah jendela 120s
 	trRes, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "incident_transition",
 		Arguments: map[string]any{"incident_id": "INC-20261113-0930-pi01", "to": "VERIFYING", "reason": "restart done"},
@@ -704,6 +721,25 @@ func TestMCP_WriteToolsPolicyTokenAndVerification(t *testing.T) {
 	}))
 	defer appHealthSrv.Close()
 
+	vhPendingRes, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "verify_health",
+		Arguments: map[string]any{
+			"incident_id":    "INC-20261113-0930-pi01",
+			"unit":           "haunted-api.service",
+			"window_seconds": 120,
+			"probe_url":      appHealthSrv.URL,
+		},
+	})
+	if err != nil {
+		t.Fatalf("verify_health pending check: %v", err)
+	}
+	vhPending := decodeStructured[VerifyHealthOutput](t, vhPendingRes)
+	if !vhPending.Pending || vhPending.Status != "PENDING_VERIFICATION" || vhPending.Healthy || vhPending.RolledBackReflexes != 0 {
+		t.Fatalf("expected PENDING_VERIFICATION immediately after L2 execution, got %+v", vhPending)
+	}
+
+	// Majukan waktu melampaui jendela observasi forward 120 detik lalu verifikasi hasil akhir
+	h.AdvanceClock(125 * time.Second)
 	vhRes, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name: "verify_health",
 		Arguments: map[string]any{
@@ -717,8 +753,8 @@ func TestMCP_WriteToolsPolicyTokenAndVerification(t *testing.T) {
 		t.Fatalf("verify_health: %v", err)
 	}
 	vh := decodeStructured[VerifyHealthOutput](t, vhRes)
-	if !vh.Healthy || vh.RolledBackReflexes != 1 {
-		t.Fatalf("expected healthy verification + 1 auto-rolled-back reflex, got %+v", vh)
+	if !vh.Healthy || vh.Status != "RESOLVED" || vh.Pending || vh.RolledBackReflexes != 1 {
+		t.Fatalf("expected healthy verification + 1 auto-rolled-back reflex after 120s forward window, got %+v", vh)
 	}
 
 	// Uji proteksi SSRF pada verify_health (alamat metadata cloud wajib ditolak)
@@ -975,11 +1011,12 @@ func TestMCP_HealthzDegraded503AndListenGuard(t *testing.T) {
 
 func TestMCP_VerifyHealth_120sWindowRAMStabilityAndEscalation(t *testing.T) {
 	h := setupTestMCPHarness(t)
+	defer h.srv.Close()
 	h.srv.cfg.PostmortemDir = filepath.Join(t.TempDir(), "incidents")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 1. Insiden stabil selama 120s (PSI < 5/1 dan RAM datar) -> lulus + RESOLVED + rollback L1
+	// 1. Insiden stabil selama 120s ke depan meski ada lonjakan PSI pra-remediasi -> abaikan histori lama, lulus RESOLVED + rollback L1
 	incPass := "INC-20261113-1100-pi01"
 	_ = h.store.CreateIncident(ctx, &incident.Incident{
 		ID: incPass, Node: "pi01", Cgroup: "/franken.slice/haunted-api.service", Severity: "P2", State: incident.StateVerifying,
@@ -988,17 +1025,49 @@ func TestMCP_VerifyHealth_120sWindowRAMStabilityAndEscalation(t *testing.T) {
 		ID: "RFX-PASS", IncidentID: incPass, Action: "cgroup_throttle", Target: "haunted-api.service",
 		ParamsJSON: `{}`, AppliedAt: h.now.Add(-2 * time.Minute), TTLSeconds: 300, ExpiresAt: h.now.Add(3 * time.Minute), Status: "APPLIED",
 	})
-	for sec := 115; sec >= 0; sec -= 15 {
+	// Suntikkan lonjakan PSI kritikal SEBELUM jendela observasi forward dimulai (wajib diabaikan C3)
+	for sec := 60; sec >= 5; sec -= 15 {
 		h.srv.PSIRing().Record("/franken.slice/haunted-api.service", PSIPoint{
 			At:            h.now.Add(-time.Duration(sec) * time.Second),
-			SomeAvg10:     1.8,
-			FullAvg10:     0.2,
-			MemoryCurrent: 220 * 1024 * 1024,
+			SomeAvg10:     42.5,
+			FullAvg10:     11.0,
+			MemoryCurrent: 460 * 1024 * 1024,
 		})
 	}
 
 	session, cleanup := connectPipeMCPClient(t, ctx, h.srv)
 	defer cleanup()
+
+	// Panggilan awal memulai jendela observasi 120 detik ke depan dan mengembalikan PENDING_VERIFICATION
+	pendingRes, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "verify_health",
+		Arguments: map[string]any{
+			"incident_id":             incPass,
+			"unit":                    "haunted-api.service",
+			"window_seconds":          120,
+			"require_window_coverage": true,
+			"auto_transition":         true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("verify_health initial pending call: %v", err)
+	}
+	pendingOut := decodeStructured[VerifyHealthOutput](t, pendingRes)
+	if !pendingOut.Pending || pendingOut.Status != "PENDING_VERIFICATION" || pendingOut.Healthy || pendingOut.State != string(incident.StateVerifying) {
+		t.Fatalf("expected PENDING_VERIFICATION on start without failing on old PSI, got %+v", pendingOut)
+	}
+
+	// Rekam 120s telemetri stabil KE DEPAN pasca baseline
+	basePass := h.Now()
+	for sec := 10; sec <= 125; sec += 15 {
+		h.srv.PSIRing().Record("/franken.slice/haunted-api.service", PSIPoint{
+			At:            basePass.Add(time.Duration(sec) * time.Second),
+			SomeAvg10:     1.8,
+			FullAvg10:     0.2,
+			MemoryCurrent: 220 * 1024 * 1024,
+		})
+	}
+	h.AdvanceClock(125 * time.Second)
 
 	passRes, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name: "verify_health",
@@ -1014,7 +1083,7 @@ func TestMCP_VerifyHealth_120sWindowRAMStabilityAndEscalation(t *testing.T) {
 		t.Fatalf("verify_health pass call: %v", err)
 	}
 	passOut := decodeStructured[VerifyHealthOutput](t, passRes)
-	if !passOut.Healthy || passOut.State != string(incident.StateResolved) || passOut.RolledBackReflexes != 1 {
+	if !passOut.Healthy || passOut.Status != "RESOLVED" || passOut.State != string(incident.StateResolved) || passOut.RolledBackReflexes != 1 {
 		t.Fatalf("expected healthy RESOLVED with 1 rollback, got %+v", passOut)
 	}
 	if !passOut.Checks.PSIStable || !passOut.Checks.MemoryStable || passOut.Checks.WindowSpanSeconds < 100 {
@@ -1041,27 +1110,46 @@ func TestMCP_VerifyHealth_120sWindowRAMStabilityAndEscalation(t *testing.T) {
 		t.Errorf("postmortem_generate leaked secret in markdown output")
 	}
 
-	// 3. Insiden gagal karena lonjakan RAM > 15% pada jendela 120s -> rollback L1 & auto-ESCALATED
+	// 3. Insiden gagal karena lonjakan RAM > 15% selama jendela forward 120s -> rollback L1 & auto-ESCALATED
 	incLeak := "INC-20261113-1105-pi01"
 	_ = h.store.CreateIncident(ctx, &incident.Incident{
 		ID: incLeak, Node: "pi01", Cgroup: "/franken.slice/worker.service", Severity: "P1", State: incident.StateVerifying,
 	})
+	baseLeak := h.Now()
 	_ = h.store.SaveReflexAction(ctx, &incident.ReflexAction{
 		ID: "RFX-LEAK", IncidentID: incLeak, Action: "admission_close", Target: "worker",
-		ParamsJSON: `{}`, AppliedAt: h.now.Add(-2 * time.Minute), TTLSeconds: 300, ExpiresAt: h.now.Add(3 * time.Minute), Status: "APPLIED",
+		ParamsJSON: `{}`, AppliedAt: baseLeak.Add(-2 * time.Minute), TTLSeconds: 600, ExpiresAt: baseLeak.Add(8 * time.Minute), Status: "APPLIED",
 	})
+
+	leakPendRes, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "verify_health",
+		Arguments: map[string]any{
+			"incident_id":     incLeak,
+			"window_seconds":  120,
+			"auto_transition": true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("verify_health leak pending call: %v", err)
+	}
+	leakPendOut := decodeStructured[VerifyHealthOutput](t, leakPendRes)
+	if !leakPendOut.Pending || leakPendOut.Status != "PENDING_VERIFICATION" {
+		t.Fatalf("expected PENDING_VERIFICATION for leak observation start, got %+v", leakPendOut)
+	}
+
 	h.srv.PSIRing().Record("/franken.slice/worker.service", PSIPoint{
-		At:            h.now.Add(-110 * time.Second),
+		At:            baseLeak.Add(15 * time.Second),
 		SomeAvg10:     2.0,
 		FullAvg10:     0.1,
 		MemoryCurrent: 100 * 1024 * 1024,
 	})
 	h.srv.PSIRing().Record("/franken.slice/worker.service", PSIPoint{
-		At:            h.now.Add(-10 * time.Second),
+		At:            baseLeak.Add(110 * time.Second),
 		SomeAvg10:     2.2,
 		FullAvg10:     0.2,
-		MemoryCurrent: 150 * 1024 * 1024, // tumbuh +50% selama jendela pemulihan
+		MemoryCurrent: 150 * 1024 * 1024, // tumbuh +50% selama jendela observasi forward
 	})
+	h.AdvanceClock(125 * time.Second)
 
 	failRes, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name: "verify_health",
@@ -1075,7 +1163,443 @@ func TestMCP_VerifyHealth_120sWindowRAMStabilityAndEscalation(t *testing.T) {
 		t.Fatalf("verify_health leak call: %v", err)
 	}
 	failOut := decodeStructured[VerifyHealthOutput](t, failRes)
-	if failOut.Healthy || failOut.Checks.MemoryStable || failOut.State != string(incident.StateEscalated) || failOut.RolledBackReflexes != 1 {
+	if failOut.Healthy || failOut.Status != "FAILED" || failOut.Checks.MemoryStable || failOut.State != string(incident.StateEscalated) || failOut.RolledBackReflexes != 1 {
 		t.Fatalf("expected unhealthy ESCALATED with MemoryStable=false and 1 rollback, got %+v", failOut)
 	}
+}
+
+func TestMCP_C3_BackgroundVerificationWorkerCompletesAutonomously(t *testing.T) {
+	h := setupTestMCPHarness(t)
+	h.srv.Close()
+
+	// Gunakan clock real-time yang terlindungi mutex untuk menguji worker latar mandiri
+	var clockMu sync.Mutex
+	curClock := func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return time.Now().UTC()
+	}
+
+	cat, err := policy.LoadCatalog(filepath.Join("..", "..", "policy", "actions.yaml"))
+	if err != nil {
+		t.Fatalf("LoadCatalog: %v", err)
+	}
+	kp, err := approval.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
+	}
+	minter, err := approval.NewMinter(kp.PrivateKey, curClock)
+	if err != nil {
+		t.Fatalf("NewMinter: %v", err)
+	}
+	verifier, err := approval.NewVerifier(kp.PublicKey, h.store, curClock)
+	if err != nil {
+		t.Fatalf("NewVerifier: %v", err)
+	}
+	reflexEng, err := reflex.NewEngine(reflex.EngineConfig{
+		Store:             h.store,
+		FS:                h.fs,
+		Catalog:           cat,
+		PropertyDriver:    newSpyPropDriver(),
+		AdmissionDriver:   reflex.NewFSAdmissionDriver(filepath.Join(t.TempDir(), "run-franken")),
+		HostMemTotalBytes: 2 * 1024 * 1024 * 1024,
+		Clock:             curClock,
+	})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	srv, err := New(Config{
+		NodeName:           "pi01-worker",
+		Version:            "test-c3",
+		Store:              h.store,
+		Catalog:            cat,
+		Reflex:             reflexEng,
+		Verifier:           verifier,
+		Runner:             &spyCommandRunner{},
+		FS:                 h.fs,
+		CgroupRoot:         "/sys/fs/cgroup",
+		ProcRoot:           "/proc",
+		UnitInspector:      &spyUnitInspector{active: true},
+		VerifyPollInterval: 30 * time.Millisecond,
+		Clock:              curClock,
+	})
+	if err != nil {
+		t.Fatalf("New mcpserver: %v", err)
+	}
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Suntikkan PSI tinggi sebelum L2 agar membuktikan worker hanya mengevaluasi periode pasca-remediasi
+	srv.PSIRing().Record("/franken.slice/haunted-api.service", PSIPoint{
+		At:            time.Now().UTC().Add(-20 * time.Second),
+		SomeAvg10:     44.0,
+		FullAvg10:     12.0,
+		MemoryCurrent: 450 * 1024 * 1024,
+	})
+
+	incID := "INC-20261113-1210-pi01"
+	plan := policy.Plan{
+		IncidentID:         incID,
+		SuspectedRootCause: "Worker observation test",
+		HumanFollowUp:      []string{"Inspect after autonomous completion"},
+		Options: []policy.PlanOption{{
+			ID:    "A",
+			Label: "Restart unit",
+			Steps: []policy.PlanStep{{
+				ID:             "step-bg-1",
+				Action:         "unit_restart",
+				Params:         map[string]any{"unit": "haunted-api.service"},
+				EvidenceIDs:    []string{"ev-bg1"},
+				ExpectedEffect: "Recover cleanly",
+			}},
+		}},
+	}
+	planBytes, _ := json.Marshal(plan)
+	planHash, _ := policy.ComputePlanHash(&plan)
+
+	_ = h.store.CreateIncident(ctx, &incident.Incident{
+		ID: incID, Node: "pi01-worker", Cgroup: "/franken.slice/haunted-api.service",
+		Severity: "P2", State: incident.StatePlanned, PlanJSON: string(planBytes),
+	})
+	_ = h.store.SaveReflexAction(ctx, &incident.ReflexAction{
+		ID: "RFX-BG-1", IncidentID: incID, Action: "cgroup_throttle", Target: "haunted-api.service",
+		ParamsJSON: `{}`, AppliedAt: time.Now().UTC().Add(-1 * time.Minute), TTLSeconds: 300, ExpiresAt: time.Now().UTC().Add(4 * time.Minute), Status: "APPLIED",
+	})
+
+	tok, _, err := minter.Mint(approval.MintRequest{
+		IncidentID: incID, PlanHash: planHash, OptionID: "A", ActionName: "unit_restart", StepIDs: []string{"step-bg-1"}, ApproverSender: "+62811112222",
+	})
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+
+	session, cleanup := connectPipeMCPClient(t, ctx, srv)
+	defer cleanup()
+
+	execRes, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "action_execute",
+		Arguments: map[string]any{
+			"incident_id":    incID,
+			"step_id":        "step-bg-1",
+			"action":         "unit_restart",
+			"params":         map[string]any{"unit": "haunted-api.service"},
+			"approval_token": tok,
+		},
+	})
+	if err != nil || execRes.IsError {
+		t.Fatalf("action_execute failed: err=%v res=%+v", err, execRes)
+	}
+
+	_, _ = session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "incident_transition",
+		Arguments: map[string]any{"incident_id": incID, "to": "VERIFYING", "reason": "start forward observation"},
+	})
+
+	// Panggil verify_health satu kali: wajib mengembalikan PENDING_VERIFICATION dan meluncurkan background worker
+	vhRes, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "verify_health",
+		Arguments: map[string]any{
+			"incident_id":             incID,
+			"unit":                    "haunted-api.service",
+			"window_seconds":          1,
+			"require_window_coverage": true,
+			"auto_transition":         true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("verify_health initial: %v", err)
+	}
+	vhPend := decodeStructured[VerifyHealthOutput](t, vhRes)
+	if !vhPend.Pending || vhPend.Status != "PENDING_VERIFICATION" || vhPend.Healthy {
+		t.Fatalf("expected PENDING_VERIFICATION while observation window active, got %+v", vhPend)
+	}
+
+	// Biarkan worker latar menuntaskan observasi 1s & transisi RESOLVED tanpa panggilan kedua
+	deadline := time.Now().Add(4 * time.Second)
+	var finalInc *incident.Incident
+	for time.Now().Before(deadline) {
+		got, gErr := h.store.GetIncident(ctx, incID)
+		if gErr == nil && got.State == incident.StateResolved {
+			finalInc = got
+			break
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+	if finalInc == nil {
+		cur, _ := h.store.GetIncident(ctx, incID)
+		t.Fatalf("expected background worker to transition %s to RESOLVED autonomously, current state=%v", incID, cur)
+	}
+
+	rfxList, _ := h.store.GetReflexActionsByIncident(ctx, incID)
+	if len(rfxList) != 1 || rfxList[0].Status != "ROLLED_BACK" {
+		t.Errorf("expected background worker to rollback L1 reflex automatically, got %+v", rfxList)
+	}
+
+	// Pemanggilan ulang verify_health mengembalikan hasil selesai yang tersimpan
+	vhFinalRes, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "verify_health",
+		Arguments: map[string]any{"incident_id": incID, "unit": "haunted-api.service", "window_seconds": 1},
+	})
+	if err != nil {
+		t.Fatalf("verify_health cached final: %v", err)
+	}
+	vhFinal := decodeStructured[VerifyHealthOutput](t, vhFinalRes)
+	if !vhFinal.Healthy || vhFinal.Status != "RESOLVED" || vhFinal.Pending || vhFinal.RolledBackReflexes != 1 {
+		t.Fatalf("expected RESOLVED cached output with 1 rollback, got %+v", vhFinal)
+	}
+}
+
+func TestMCP_C4_PM2WrappedWithSystemdRunIsolation(t *testing.T) {
+	h := setupTestMCPHarness(t)
+	defer h.srv.Close()
+	h.srv.cfg.PM2Owner = "nodeapp"
+	h.srv.cfg.PM2Home = "/home/nodeapp/.pm2"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	incID := "INC-20261113-1220-pi01"
+	plan := policy.Plan{
+		IncidentID:         incID,
+		SuspectedRootCause: "Worker heap leak in PM2 cluster",
+		HumanFollowUp:      []string{"Inspect event loop timers"},
+		Options: []policy.PlanOption{{
+			ID:    "A",
+			Label: "Reload and restart PM2 cleanly",
+			Steps: []policy.PlanStep{
+				{
+					ID:             "step-pm2-1",
+					Action:         "pm2_reload",
+					Params:         map[string]any{"app": "haunted-api"},
+					EvidenceIDs:    []string{"ev-seed1"},
+					ExpectedEffect: "Graceful reload outside Sentinel cgroup",
+				},
+				{
+					ID:             "step-pm2-2",
+					Action:         "pm2_restart_instance",
+					Params:         map[string]any{"app": "haunted-api", "pm_id": 2},
+					EvidenceIDs:    []string{"ev-seed1"},
+					ExpectedEffect: "Restart shard 2 outside Sentinel cgroup",
+				},
+			},
+		}},
+	}
+	planBytes, _ := json.Marshal(plan)
+	planHash, _ := policy.ComputePlanHash(&plan)
+
+	_ = h.store.CreateIncident(ctx, &incident.Incident{
+		ID: incID, Node: "pi01", Cgroup: "/franken.slice/haunted-api.service",
+		Severity: "P1", State: incident.StatePlanned, PlanJSON: string(planBytes),
+	})
+
+	tokReload, _, err := h.minter.Mint(approval.MintRequest{
+		IncidentID: incID, PlanHash: planHash, OptionID: "A", ActionName: "pm2_reload", StepIDs: []string{"step-pm2-1"}, ApproverSender: "+62811112222",
+	})
+	if err != nil {
+		t.Fatalf("Mint pm2_reload: %v", err)
+	}
+	tokRestart, _, err := h.minter.Mint(approval.MintRequest{
+		IncidentID: incID, PlanHash: planHash, OptionID: "A", ActionName: "pm2_restart_instance", StepIDs: []string{"step-pm2-2"}, ApproverSender: "+62811112222",
+	})
+	if err != nil {
+		t.Fatalf("Mint pm2_restart_instance: %v", err)
+	}
+
+	session, cleanup := connectPipeMCPClient(t, ctx, h.srv)
+	defer cleanup()
+
+	res1, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "action_execute",
+		Arguments: map[string]any{
+			"incident_id": incID, "step_id": "step-pm2-1", "action": "pm2_reload",
+			"params": map[string]any{"app": "haunted-api"}, "approval_token": tokReload,
+		},
+	})
+	if err != nil || res1.IsError {
+		t.Fatalf("pm2_reload execute failed: err=%v res=%+v", err, res1)
+	}
+
+	res2, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "action_execute",
+		Arguments: map[string]any{
+			"incident_id": incID, "step_id": "step-pm2-2", "action": "pm2_restart_instance",
+			"params": map[string]any{"app": "haunted-api", "pm_id": 2}, "approval_token": tokRestart,
+		},
+	})
+	if err != nil || res2.IsError {
+		t.Fatalf("pm2_restart_instance execute failed: err=%v res=%+v", err, res2)
+	}
+
+	h.runner.mu.Lock()
+	calls := append([]spyCommandCall(nil), h.runner.calls...)
+	h.runner.mu.Unlock()
+
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 systemd-run calls, got %d (%+v)", len(calls), calls)
+	}
+
+	want1 := []string{"--wait", "--pipe", "--collect", "--uid=nodeapp", "--setenv=PM2_HOME=/home/nodeapp/.pm2", "--", "pm2", "reload", "haunted-api"}
+	want2 := []string{"--wait", "--pipe", "--collect", "--uid=nodeapp", "--setenv=PM2_HOME=/home/nodeapp/.pm2", "--", "pm2", "restart", "haunted-api", "2"}
+
+	if calls[0].Binary != "systemd-run" || strings.Join(calls[0].Args, " ") != strings.Join(want1, " ") {
+		t.Errorf("pm2_reload argv mismatch: got (%s %v), want (systemd-run %v)", calls[0].Binary, calls[0].Args, want1)
+	}
+	if calls[1].Binary != "systemd-run" || strings.Join(calls[1].Args, " ") != strings.Join(want2, " ") {
+		t.Errorf("pm2_restart_instance argv mismatch: got (%s %v), want (systemd-run %v)", calls[1].Binary, calls[1].Args, want2)
+	}
+}
+
+func TestMCP_C4_ProcessTerminateEscalatesSIGTERMToSIGKILL(t *testing.T) {
+	t.Run("stubborn_pid_escalates_sigkill_after_grace", func(t *testing.T) {
+		h := setupTestMCPHarness(t)
+		defer h.srv.Close()
+		h.srv.cfg.TerminateGracePeriod = 60 * time.Millisecond
+		h.srv.cfg.TerminatePollInterval = 10 * time.Millisecond
+
+		// Proses 2345 membandel: tetap berada pada state S meski sudah menerima SIGTERM
+		h.fs.SetFile("/proc/2345/stat", "2345 (stuck-worker) S 1200 1200 1200 0 -1 4194560 0 0 0 0\n")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		incID := "INC-20261113-1230-pi01"
+		plan := policy.Plan{
+			IncidentID:         incID,
+			SuspectedRootCause: "Runaway fork storm worker ignoring SIGTERM",
+			HumanFollowUp:      []string{"Audit signal traps"},
+			Options: []policy.PlanOption{{
+				ID:    "A",
+				Label: "Terminate runaway PID",
+				Steps: []policy.PlanStep{{
+					ID:             "step-term-1",
+					Action:         "process_terminate",
+					Params:         map[string]any{"pid": 2345},
+					EvidenceIDs:    []string{"ev-seed1"},
+					ExpectedEffect: "Terminate PID 2345 cleanly or via SIGKILL",
+				}},
+			}},
+		}
+		planBytes, _ := json.Marshal(plan)
+		planHash, _ := policy.ComputePlanHash(&plan)
+
+		_ = h.store.CreateIncident(ctx, &incident.Incident{
+			ID: incID, Node: "pi01", Cgroup: "/franken.slice/haunted-api.service",
+			Severity: "P1", State: incident.StatePlanned, PlanJSON: string(planBytes),
+		})
+		tok, _, err := h.minter.Mint(approval.MintRequest{
+			IncidentID: incID, PlanHash: planHash, OptionID: "A", ActionName: "process_terminate", StepIDs: []string{"step-term-1"}, ApproverSender: "+62811112222",
+		})
+		if err != nil {
+			t.Fatalf("Mint process_terminate: %v", err)
+		}
+
+		session, cleanup := connectPipeMCPClient(t, ctx, h.srv)
+		defer cleanup()
+
+		res, err := session.CallTool(ctx, &mcp.CallToolParams{
+			Name: "action_execute",
+			Arguments: map[string]any{
+				"incident_id": incID, "step_id": "step-term-1", "action": "process_terminate",
+				"params": map[string]any{"pid": 2345}, "approval_token": tok,
+			},
+		})
+		if err != nil || res.IsError {
+			t.Fatalf("process_terminate failed: err=%v res=%+v", err, res)
+		}
+
+		h.runner.mu.Lock()
+		calls := append([]spyCommandCall(nil), h.runner.calls...)
+		h.runner.mu.Unlock()
+
+		if len(calls) != 2 {
+			t.Fatalf("expected 2 kill calls (SIGTERM then SIGKILL), got %d: %+v", len(calls), calls)
+		}
+		if calls[0].Binary != "kill" || strings.Join(calls[0].Args, " ") != "-TERM 2345" {
+			t.Errorf("first call expected kill -TERM 2345, got %+v", calls[0])
+		}
+		if calls[1].Binary != "kill" || strings.Join(calls[1].Args, " ") != "-KILL 2345" {
+			t.Errorf("second call expected kill -KILL 2345, got %+v", calls[1])
+		}
+
+		escCount, err := h.store.CountAuditByEvent(ctx, incID, "PROCESS_SIGKILL_ESCALATION")
+		if err != nil {
+			t.Fatalf("CountAuditByEvent: %v", err)
+		}
+		if escCount != 1 {
+			t.Errorf("expected 1 PROCESS_SIGKILL_ESCALATION audit entry, got %d", escCount)
+		}
+	})
+
+	t.Run("graceful_exit_skips_sigkill", func(t *testing.T) {
+		h := setupTestMCPHarness(t)
+		defer h.srv.Close()
+		h.srv.cfg.TerminateGracePeriod = 200 * time.Millisecond
+		h.srv.cfg.TerminatePollInterval = 10 * time.Millisecond
+
+		// Proses 2346 hidup saat awal, lalu keluar bersih 25ms pasca SIGTERM
+		h.fs.SetFile("/proc/2346/stat", "2346 (worker) S 1200 1200 1200 0 -1 4194560 0 0 0 0\n")
+		go func() {
+			time.Sleep(25 * time.Millisecond)
+			h.fs.Remove("/proc/2346/stat")
+		}()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		incID := "INC-20261113-1235-pi01"
+		plan := policy.Plan{
+			IncidentID:         incID,
+			SuspectedRootCause: "Graceful worker exit",
+			HumanFollowUp:      []string{"None"},
+			Options: []policy.PlanOption{{
+				ID:    "A",
+				Label: "Terminate cleanly",
+				Steps: []policy.PlanStep{{
+					ID:             "step-term-2",
+					Action:         "process_terminate",
+					Params:         map[string]any{"pid": 2346},
+					EvidenceIDs:    []string{"ev-seed1"},
+					ExpectedEffect: "Exit on SIGTERM without SIGKILL",
+				}},
+			}},
+		}
+		planBytes, _ := json.Marshal(plan)
+		planHash, _ := policy.ComputePlanHash(&plan)
+
+		_ = h.store.CreateIncident(ctx, &incident.Incident{
+			ID: incID, Node: "pi01", Cgroup: "/franken.slice/haunted-api.service",
+			Severity: "P1", State: incident.StatePlanned, PlanJSON: string(planBytes),
+		})
+		tok, _, err := h.minter.Mint(approval.MintRequest{
+			IncidentID: incID, PlanHash: planHash, OptionID: "A", ActionName: "process_terminate", StepIDs: []string{"step-term-2"}, ApproverSender: "+62811112222",
+		})
+		if err != nil {
+			t.Fatalf("Mint process_terminate: %v", err)
+		}
+
+		session, cleanup := connectPipeMCPClient(t, ctx, h.srv)
+		defer cleanup()
+
+		res, err := session.CallTool(ctx, &mcp.CallToolParams{
+			Name: "action_execute",
+			Arguments: map[string]any{
+				"incident_id": incID, "step_id": "step-term-2", "action": "process_terminate",
+				"params": map[string]any{"pid": 2346}, "approval_token": tok,
+			},
+		})
+		if err != nil || res.IsError {
+			t.Fatalf("process_terminate failed: err=%v res=%+v", err, res)
+		}
+
+		h.runner.mu.Lock()
+		calls := append([]spyCommandCall(nil), h.runner.calls...)
+		h.runner.mu.Unlock()
+
+		if len(calls) != 1 || calls[0].Binary != "kill" || strings.Join(calls[0].Args, " ") != "-TERM 2346" {
+			t.Fatalf("expected only single kill -TERM 2346 call without SIGKILL, got %+v", calls)
+		}
+	})
 }

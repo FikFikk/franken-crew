@@ -48,10 +48,10 @@
 | `process_tree`        | L0    | `cgroup`                                    | pohon proses                               | —                                                               |
 | `zombie_report`       | L0    | —                                           | zombie per PPID                            | —                                                               |
 | `plan_submit`         | L0    | `incident_id`, `plan`                       | `plan_hash`, tier per step, `violations[]` | Maks 2 revisi                                                   |
-| `action_execute`      | L1/L2 | `incident_id`, `step_id`, `approval_token?` | exit code, durasi, stderr terredaksi       | L2 tanpa token valid ditolak; proses terlindungi selalu ditolak |
+| `action_execute`      | L1/L2 | `incident_id`, `step_id`, `approval_token?` | exit code, durasi, stderr terredaksi       | L2 tanpa token valid ditolak; PM2 via `systemd-run`; `process_terminate` eskalasi `SIGTERM` → `SIGKILL`; proses terlindungi ditolak |
 | `action_rollback`     | L1    | `reflex_id`                                 | status rollback                            | —                                                               |
 | `incident_transition` | L0    | `incident_id`, `to`, `reason`               | state baru                                 | Hanya transisi legal                                            |
-| `verify_health`       | L0    | `incident_id`, `window_seconds = 120`, `require_window_coverage?`, `auto_transition?` | `healthy`, `checks` (PSI < 5/1 & stabilitas RAM), `rolled_back_reflexes` | Lulus → rollback refleks + opsional `RESOLVED`; gagal + `auto_transition` → rollback refleks + `ESCALATED` |
+| `verify_health`       | L0    | `incident_id`, `window_seconds = 120`, `require_window_coverage?`, `auto_transition?` | `status` (`PENDING_VERIFICATION` / `RESOLVED` / `FAILED`), `healthy`, `checks`, `rolled_back_reflexes` | Observasi forward ke depan via background worker; `PENDING_VERIFICATION` selama jendela berjalan; lulus → rollback refleks + opsional `RESOLVED`; gagal + `auto_transition` → rollback refleks + `ESCALATED` |
 | `postmortem_generate` | L0    | `incident_id`, `author?`, `notes?`                                                  | `file_path`, `state`, `markdown` terdiredaksi                            | Menulis berkas aman ke `incidents/<incident_id>/postmortem.md` & mencatat audit `POSTMORTEM_GENERATED`    |
 
 ### 1.2 CLI `franken` (`cmd/franken`)
@@ -147,3 +147,4 @@
 | Kiro Crew cron `morning-digest` (`.kiro/crons/morning-digest.json`) | `0 7 * * *` (waktu lokal) | Ringkasan incident P3 dan statistik 24 jam                                    | Satu pesan WA per node                                                      |
 | Timer internal wa-bridge        | Setiap 15 s               | Cek heartbeat Sentinel                                                        | Alert `node silent` setelah 3 kali gagal                                    |
 | Timer internal Sentinel         | Per TTL reflex            | Rollback aksi L1                                                              | Mengembalikan `MemoryHigh` / admission                                      |
+| Background worker `verify_health` | Per `VerifyPollInterval` (default 5 s) selama jendela observasi | Mengumpulkan sampel metrik forward pasca L2 & mengevaluasi pemulihan | Emit SSE `verification.completed`, rollback refleks L1, & transisi `RESOLVED`/`ESCALATED` |

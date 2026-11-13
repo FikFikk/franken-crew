@@ -116,6 +116,7 @@ func (d *chaosPropertyDriver) SetProperties(_ context.Context, unit string, prop
 type chaosCommandRunner struct {
 	mu    sync.Mutex
 	calls []string
+	fs    *kernelfs.MemFS
 }
 
 func (r *chaosCommandRunner) Execute(_ context.Context, binary string, args []string, _ time.Duration) (*executor.Result, error) {
@@ -126,6 +127,10 @@ func (r *chaosCommandRunner) Execute(_ context.Context, binary string, args []st
 	r.mu.Lock()
 	r.calls = append(r.calls, binary+" "+strings.Join(args, " "))
 	r.mu.Unlock()
+	// Simulasikan proses target keluar setelah menerima sinyal terminasi agar tidak memicu tunggu grace 10 detik
+	if r.fs != nil && binary == "kill" && len(args) >= 2 && (args[0] == "-TERM" || args[0] == "-KILL") {
+		r.fs.Remove("/proc/" + args[1] + "/stat")
+	}
 	return &executor.Result{
 		Binary:   binary,
 		Args:     append([]string(nil), args...),
@@ -252,7 +257,7 @@ func RunSuite(ctx context.Context, cfg Config) (*SuiteReport, error) {
 		Catalog:       cat,
 		Reflex:        reflexEng,
 		Verifier:      verifier,
-		Runner:        &chaosCommandRunner{},
+		Runner:        &chaosCommandRunner{fs: mfs},
 		FS:            mfs,
 		CgroupRoot:    "/sys/fs/cgroup",
 		ProcRoot:      "/proc",
@@ -596,6 +601,7 @@ func injectChaosScenario(mfs *kernelfs.MemFS, apiCg string, journalReader *chaos
 		mfs.SetFile(apiCg+"/memory.current", "470000000\n")
 		mfs.SetFile(apiCg+"/memory.events", fmt.Sprintf("low 0\nhigh %d\nmax %d\noom 0\noom_kill 0\n", runNum, runNum))
 		mfs.SetFile(apiCg+"/memory.pressure", "some avg10=32.00 avg60=15.00 avg300=5.00 total=6200\nfull avg10=5.40 avg60=2.00 avg300=0.50 total=1200\n")
+		mfs.SetFile("/proc/1305/stat", "1305 (worker) S 1200 1200 1200 0 -1 4194560 0 0 0 0\n")
 		journalReader.SetLines([]string{
 			"2026-11-13T12:00:01Z haunted-api ERROR: PM2 worker fork storm / restart loop detected",
 		})

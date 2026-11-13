@@ -3,7 +3,10 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -79,5 +82,114 @@ func TestExecutor_TimeoutEnforcement(t *testing.T) {
 	if res == nil || !res.TimedOut {
 		t.Errorf("expected result to reflect TimedOut=true")
 	}
+}
+
+func TestExecutor_AllowlistIncludesSystemdRun(t *testing.T) {
+	if !AllowlistedBinaries["systemd-run"] {
+		t.Fatalf("expected systemd-run to be included in AllowlistedBinaries")
+	}
+}
+
+func TestExecutorHelperProcess(t *testing.T) {
+	mode := ""
+	for _, arg := range os.Args {
+		switch arg {
+		case "franken-helper-orphan-exit", "franken-helper-timeout-pipe", "franken-helper-sleep":
+			mode = arg
+		}
+	}
+	if mode == "" {
+		return
+	}
+
+	switch mode {
+	case "franken-helper-sleep":
+		time.Sleep(2500 * time.Millisecond)
+	case "franken-helper-orphan-exit":
+		// Cucu proses menahan pipe stdout/stderr tetap terbuka meski proses induk segera selesai
+		child := exec.Command(os.Args[0], "-test.run=^TestExecutorHelperProcess$", "franken-helper-sleep")
+		child.Stdout = os.Stdout
+		child.Stderr = os.Stderr
+		if err := child.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "start child: %v\n", err)
+			os.Exit(2)
+		}
+		fmt.Println("parent-exiting-pipe-still-open")
+		os.Exit(0)
+	case "franken-helper-timeout-pipe":
+		child := exec.Command(os.Args[0], "-test.run=^TestExecutorHelperProcess$", "franken-helper-sleep")
+		child.Stdout = os.Stdout
+		child.Stderr = os.Stderr
+		if err := child.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "start child: %v\n", err)
+			os.Exit(2)
+		}
+		fmt.Println("parent-blocking-until-cancel")
+		time.Sleep(2500 * time.Millisecond)
+		os.Exit(0)
+	}
+}
+
+func TestExecutor_WaitDelayAndCancelPreventsPipeHang(t *testing.T) {
+	selfBase := strings.ToLower(filepath.Base(os.Args[0]))
+	execSafe := NewExecutor(2*time.Second).WithWaitDelay(120 * time.Millisecond)
+	execSafe.allowed = map[string]bool{selfBase: true}
+
+	t.Run("orphan_holds_pipes_after_parent_exit", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		start := time.Now()
+		res, err := execSafe.Execute(ctx, os.Args[0], []string{"-test.run=^TestExecutorHelperProcess$", "franken-helper-orphan-exit"}, 2*time.Second)
+		elapsed := time.Since(start)
+
+		if !errors.Is(err, ErrCommandTimeout) {
+			t.Fatalf("expected ErrCommandTimeout via WaitDelay when grandchild holds stdio pipes, got err=%v", err)
+		}
+		if res == nil || !res.TimedOut {
+			t.Fatalf("expected TimedOut=true, got %+v", res)
+		}
+		if elapsed >= 1500*time.Millisecond {
+			t.Fatalf("WaitDelay did not break pipe hang promptly: took %v (wanted < 1.5s)", elapsed)
+		}
+		if !strings.Contains(res.Stdout, "parent-exiting-pipe-still-open") {
+			t.Errorf("expected captured parent stdout before WaitDelay, got %q", res.Stdout)
+		}
+	})
+
+	t.Run("cancel_and_waitdelay_on_timeout", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		start := time.Now()
+		res, err := execSafe.Execute(ctx, os.Args[0], []string{"-test.run=^TestExecutorHelperProcess$", "franken-helper-timeout-pipe"}, 100*time.Millisecond)
+		elapsed := time.Since(start)
+
+		if !errors.Is(err, ErrCommandTimeout) {
+			t.Fatalf("expected ErrCommandTimeout on blocked parent + pipe child, got err=%v", err)
+		}
+		if res == nil || !res.TimedOut {
+			t.Fatalf("expected TimedOut=true, got %+v", res)
+		}
+		if elapsed >= 1500*time.Millisecond {
+			t.Fatalf("Cancel + WaitDelay took too long: %v (wanted < 1.5s)", elapsed)
+		}
+	})
+
+	t.Run("context_cancellation_aborts_immediately", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		time.AfterFunc(80*time.Millisecond, cancel)
+
+		start := time.Now()
+		_, err := execSafe.Execute(ctx, os.Args[0], []string{"-test.run=^TestExecutorHelperProcess$", "franken-helper-sleep"}, 3*time.Second)
+		elapsed := time.Since(start)
+
+		if err == nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled error, got: %v", err)
+		}
+		if elapsed >= 1500*time.Millisecond {
+			t.Fatalf("context cancel did not abort process promptly: %v", elapsed)
+		}
+	})
 }
 

@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"os/user"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -144,12 +147,19 @@ type HealthChecksDetail struct {
 
 // VerifyHealthOutput melaporkan kesimpulan kelulusan evaluasi kesehatan dan jumlah refleks yang di-rollback.
 type VerifyHealthOutput struct {
-	IncidentID         string             `json:"incident_id"`
-	Healthy            bool               `json:"healthy"`
-	State              string             `json:"state,omitempty"`
-	FailureReasons     []string           `json:"failure_reasons,omitempty"`
-	RolledBackReflexes int                `json:"rolled_back_reflexes"`
-	Checks             HealthChecksDetail `json:"checks"`
+	IncidentID           string             `json:"incident_id"`
+	Status               string             `json:"status"`
+	Pending              bool               `json:"pending"`
+	Healthy              bool               `json:"healthy"`
+	State                string             `json:"state,omitempty"`
+	Message              string             `json:"message,omitempty"`
+	ObservationStartedAt string             `json:"observation_started_at,omitempty"`
+	ObservationEndsAt    string             `json:"observation_ends_at,omitempty"`
+	ElapsedSeconds       int64              `json:"elapsed_seconds"`
+	RemainingSeconds     int64              `json:"remaining_seconds"`
+	FailureReasons       []string           `json:"failure_reasons,omitempty"`
+	RolledBackReflexes   int                `json:"rolled_back_reflexes"`
+	Checks               HealthChecksDetail `json:"checks"`
 }
 
 // PostmortemGenerateInput memuat permintaan pembuatan dokumen markdown postmortem otomatis pasca insiden.
@@ -537,7 +547,7 @@ func (s *Server) executeL2CommandStep(ctx context.Context, inc *incident.Inciden
 		return nil, ActionExecuteOutput{}, errors.New("command runner is not configured")
 	}
 
-	binary, args, timeout, err := buildL2Command(actionName, params, s.cfg.Catalog)
+	binary, args, timeout, err := s.buildL2Command(actionName, params, s.cfg.Catalog)
 	if err != nil {
 		return nil, ActionExecuteOutput{}, err
 	}
@@ -555,69 +565,48 @@ func (s *Server) executeL2CommandStep(ctx context.Context, inc *incident.Inciden
 	}
 
 	if errors.Is(execErr, executor.ErrCommandTimeout) || (res != nil && res.TimedOut) {
-		_ = s.cfg.Store.RecordAudit(ctx, inc.ID, "remediator", "ACTION_TIMEOUT",
-			fmt.Sprintf(`{"step_id":%q,"action":%q,"binary":%q,"duration_ms":%d,"stderr":%q}`, stepID, actionName, binary, durMs, stderrRedacted))
-		if incident.CanTransition(curState, incident.StateEscalated) {
-			_ = s.cfg.Store.TransitionState(ctx, inc.ID, incident.StateEscalated, "sentinel", "command timeout on "+actionName)
-			curState = incident.StateEscalated
-		}
-		s.broker.Publish(StreamEvent{
-			Type:       "incident.updated",
-			IncidentID: inc.ID,
-			Severity:   inc.Severity,
-			State:      string(curState),
-			Summary:    fmt.Sprintf("Command timeout executing %s; incident escalated", actionName),
-		})
-		return nil, ActionExecuteOutput{
-			IncidentID: inc.ID,
-			StepID:     stepID,
-			Action:     actionName,
-			Tier:       string(policy.TierL2),
-			Success:    false,
-			Binary:     binary,
-			ExitCode:   exitCode,
-			DurationMs: durMs,
-			Stdout:     stdoutRedacted,
-			Stderr:     stderrRedacted,
-			State:      string(curState),
-		}, execErr
+		return s.handleL2Timeout(ctx, inc, stepID, actionName, binary, exitCode, durMs, stdoutRedacted, stderrRedacted, curState, execErr)
+	}
+	if execErr != nil || exitCode != 0 {
+		return s.handleL2Failure(ctx, inc, stepID, actionName, binary, exitCode, durMs, stdoutRedacted, stderrRedacted, curState, execErr)
 	}
 
-	if execErr != nil || exitCode != 0 {
-		errMsg := stderrRedacted
-		if execErr != nil && errMsg == "" {
-			errMsg = redact.String(execErr.Error())
+	escalatedSIGKILL := false
+	if actionName == "process_terminate" && len(args) >= 2 {
+		pid, _ := strconv.Atoi(args[1])
+		escRes, escalated, escErr := s.escalateProcessTerminateIfAlive(ctx, inc, stepID, pid, timeout)
+		if escRes != nil {
+			durMs += escRes.Duration.Milliseconds()
+			if extraOut := redact.String(escRes.Stdout); extraOut != "" {
+				if stdoutRedacted != "" {
+					stdoutRedacted += "\n"
+				}
+				stdoutRedacted += extraOut
+			}
+			if extraErr := redact.String(escRes.Stderr); extraErr != "" {
+				if stderrRedacted != "" {
+					stderrRedacted += "\n"
+				}
+				stderrRedacted += extraErr
+			}
+			exitCode = escRes.ExitCode
 		}
-		_ = s.cfg.Store.RecordAudit(ctx, inc.ID, "remediator", "ACTION_FAILED",
-			fmt.Sprintf(`{"step_id":%q,"action":%q,"exit_code":%d,"duration_ms":%d,"stderr":%q}`, stepID, actionName, exitCode, durMs, errMsg))
-		if incident.CanTransition(curState, incident.StateEscalated) {
-			_ = s.cfg.Store.TransitionState(ctx, inc.ID, incident.StateEscalated, "sentinel", "action failed: "+actionName)
-			curState = incident.StateEscalated
+		if errors.Is(escErr, executor.ErrCommandTimeout) || (escRes != nil && escRes.TimedOut) {
+			return s.handleL2Timeout(ctx, inc, stepID, actionName, "kill", exitCode, durMs, stdoutRedacted, stderrRedacted, curState, escErr)
 		}
-		s.broker.Publish(StreamEvent{
-			Type:       "incident.updated",
-			IncidentID: inc.ID,
-			Severity:   inc.Severity,
-			State:      string(curState),
-			Summary:    fmt.Sprintf("Remediation %s failed with exit code %d", actionName, exitCode),
-		})
-		return nil, ActionExecuteOutput{
-			IncidentID: inc.ID,
-			StepID:     stepID,
-			Action:     actionName,
-			Tier:       string(policy.TierL2),
-			Success:    false,
-			Binary:     binary,
-			ExitCode:   exitCode,
-			DurationMs: durMs,
-			Stdout:     stdoutRedacted,
-			Stderr:     errMsg,
-			State:      string(curState),
-		}, fmt.Errorf("action %s failed (exit=%d): %s", actionName, exitCode, errMsg)
+		if escErr != nil || (escalated && exitCode != 0) {
+			return s.handleL2Failure(ctx, inc, stepID, actionName, "kill", exitCode, durMs, stdoutRedacted, stderrRedacted, curState, escErr)
+		}
+		escalatedSIGKILL = escalated
 	}
 
 	_ = s.cfg.Store.RecordAudit(ctx, inc.ID, "remediator", "ACTION_EXECUTED",
-		fmt.Sprintf(`{"step_id":%q,"action":%q,"binary":%q,"exit_code":%d,"duration_ms":%d}`, stepID, actionName, binary, exitCode, durMs))
+		fmt.Sprintf(`{"step_id":%q,"action":%q,"binary":%q,"exit_code":%d,"duration_ms":%d,"escalated_sigkill":%t}`,
+			stepID, actionName, binary, 0, durMs, escalatedSIGKILL))
+
+	// Tetapkan baseline waktu & nomor urut observasi forward segera setelah aksi L2 berhasil dieksekusi (C3)
+	hasOOM, baseOOM := s.captureIncidentOOMBaseline(inc.Cgroup)
+	s.verifyCoord.RecordL2Execution(inc.ID, s.cfg.Clock().UTC(), s.psiRing.CurrentSeq(), hasOOM, baseOOM)
 
 	s.broker.Publish(StreamEvent{
 		Type:       "action.executed",
@@ -625,7 +614,7 @@ func (s *Server) executeL2CommandStep(ctx context.Context, inc *incident.Inciden
 		Severity:   inc.Severity,
 		State:      string(curState),
 		Summary:    fmt.Sprintf("Executed L2 action %s successfully", actionName),
-		Data:       map[string]any{"step_id": stepID, "action": actionName, "duration_ms": durMs},
+		Data:       map[string]any{"step_id": stepID, "action": actionName, "duration_ms": durMs, "escalated_sigkill": escalatedSIGKILL},
 	})
 
 	return nil, ActionExecuteOutput{
@@ -641,6 +630,168 @@ func (s *Server) executeL2CommandStep(ctx context.Context, inc *incident.Inciden
 		Stderr:     stderrRedacted,
 		State:      string(curState),
 	}, nil
+}
+
+func (s *Server) handleL2Timeout(ctx context.Context, inc *incident.Incident, stepID, actionName, binary string, exitCode int, durMs int64, stdoutRedacted, stderrRedacted string, curState incident.State, execErr error) (*mcp.CallToolResult, ActionExecuteOutput, error) {
+	_ = s.cfg.Store.RecordAudit(ctx, inc.ID, "remediator", "ACTION_TIMEOUT",
+		fmt.Sprintf(`{"step_id":%q,"action":%q,"binary":%q,"duration_ms":%d,"stderr":%q}`, stepID, actionName, binary, durMs, stderrRedacted))
+	if incident.CanTransition(curState, incident.StateEscalated) {
+		_ = s.cfg.Store.TransitionState(ctx, inc.ID, incident.StateEscalated, "sentinel", "command timeout on "+actionName)
+		curState = incident.StateEscalated
+	}
+	s.broker.Publish(StreamEvent{
+		Type:       "incident.updated",
+		IncidentID: inc.ID,
+		Severity:   inc.Severity,
+		State:      string(curState),
+		Summary:    fmt.Sprintf("Command timeout executing %s; incident escalated", actionName),
+	})
+	return nil, ActionExecuteOutput{
+		IncidentID: inc.ID,
+		StepID:     stepID,
+		Action:     actionName,
+		Tier:       string(policy.TierL2),
+		Success:    false,
+		Binary:     binary,
+		ExitCode:   exitCode,
+		DurationMs: durMs,
+		Stdout:     stdoutRedacted,
+		Stderr:     stderrRedacted,
+		State:      string(curState),
+	}, execErr
+}
+
+func (s *Server) handleL2Failure(ctx context.Context, inc *incident.Incident, stepID, actionName, binary string, exitCode int, durMs int64, stdoutRedacted, stderrRedacted string, curState incident.State, execErr error) (*mcp.CallToolResult, ActionExecuteOutput, error) {
+	errMsg := stderrRedacted
+	if execErr != nil && errMsg == "" {
+		errMsg = redact.String(execErr.Error())
+	}
+	_ = s.cfg.Store.RecordAudit(ctx, inc.ID, "remediator", "ACTION_FAILED",
+		fmt.Sprintf(`{"step_id":%q,"action":%q,"exit_code":%d,"duration_ms":%d,"stderr":%q}`, stepID, actionName, exitCode, durMs, errMsg))
+	if incident.CanTransition(curState, incident.StateEscalated) {
+		_ = s.cfg.Store.TransitionState(ctx, inc.ID, incident.StateEscalated, "sentinel", "action failed: "+actionName)
+		curState = incident.StateEscalated
+	}
+	s.broker.Publish(StreamEvent{
+		Type:       "incident.updated",
+		IncidentID: inc.ID,
+		Severity:   inc.Severity,
+		State:      string(curState),
+		Summary:    fmt.Sprintf("Remediation %s failed with exit code %d", actionName, exitCode),
+	})
+	return nil, ActionExecuteOutput{
+		IncidentID: inc.ID,
+		StepID:     stepID,
+		Action:     actionName,
+		Tier:       string(policy.TierL2),
+		Success:    false,
+		Binary:     binary,
+		ExitCode:   exitCode,
+		DurationMs: durMs,
+		Stdout:     stdoutRedacted,
+		Stderr:     errMsg,
+		State:      string(curState),
+	}, fmt.Errorf("action %s failed (exit=%d): %s", actionName, exitCode, errMsg)
+}
+
+// escalateProcessTerminateIfAlive menunggu batas grace SIGTERM dan otomatis mengeskalasi ke SIGKILL bila proses tetap hidup.
+func (s *Server) escalateProcessTerminateIfAlive(ctx context.Context, inc *incident.Incident, stepID string, pid int, cmdTimeout time.Duration) (*executor.Result, bool, error) {
+	if pid <= 1 || !s.isProcessAlive(ctx, pid) {
+		return nil, false, nil
+	}
+
+	grace := s.cfg.TerminateGracePeriod
+	if grace <= 0 {
+		grace = 10 * time.Second
+	}
+	poll := s.cfg.TerminatePollInterval
+	if poll <= 0 {
+		poll = 100 * time.Millisecond
+		if grace < 400*time.Millisecond {
+			poll = grace / 4
+			if poll < 5*time.Millisecond {
+				poll = 5 * time.Millisecond
+			}
+		}
+	}
+
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+
+waitLoop:
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		case <-timer.C:
+			break waitLoop
+		case <-ticker.C:
+			if !s.isProcessAlive(ctx, pid) {
+				return nil, false, nil
+			}
+		}
+	}
+
+	// Cek terakhir tepat sebelum melepas SIGKILL agar tidak mengenai PID yang baru saja keluar
+	if !s.isProcessAlive(ctx, pid) {
+		return nil, false, nil
+	}
+
+	pidStr := strconv.Itoa(pid)
+	killRes, killErr := s.cfg.Runner.Execute(ctx, "kill", []string{"-KILL", pidStr}, cmdTimeout)
+	_ = s.cfg.Store.RecordAudit(ctx, inc.ID, "remediator", "PROCESS_SIGKILL_ESCALATION",
+		fmt.Sprintf(`{"step_id":%q,"pid":%d,"grace_ms":%d}`, stepID, pid, grace.Milliseconds()))
+	return killRes, true, killErr
+}
+
+// isProcessAlive memeriksa apakah PID masih berjalan dan bukan proses zombie ('Z'/'X').
+func (s *Server) isProcessAlive(ctx context.Context, pid int) bool {
+	if s.cfg.ProcessAlive != nil {
+		return s.cfg.ProcessAlive(ctx, pid)
+	}
+	if s.cfg.FS != nil {
+		procRoot := strings.TrimRight(s.cfg.ProcRoot, "/")
+		if procRoot == "" {
+			procRoot = "/proc"
+		}
+		statPath := path.Join(procRoot, strconv.Itoa(pid), "stat")
+		data, err := s.cfg.FS.ReadFile(statPath)
+		if err == nil {
+			raw := string(data)
+			if rparen := strings.LastIndexByte(raw, ')'); rparen != -1 {
+				rest := strings.TrimSpace(raw[rparen+1:])
+				if len(rest) > 0 && (rest[0] == 'Z' || rest[0] == 'X') {
+					return false
+				}
+			}
+			return true
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+	}
+	if s.cfg.Runner == nil {
+		return false
+	}
+	probeRes, probeErr := s.cfg.Runner.Execute(ctx, "kill", []string{"-0", strconv.Itoa(pid)}, 2*time.Second)
+	return probeErr == nil && probeRes != nil && probeRes.ExitCode == 0
+}
+
+func (s *Server) captureIncidentOOMBaseline(cg string) (bool, uint64) {
+	if s.cfg.FS == nil || strings.TrimSpace(cg) == "" {
+		return false, 0
+	}
+	absCgDir, _, err := resolveSafeCgroupDir(s.cfg.CgroupRoot, cg)
+	if err != nil {
+		return false, 0
+	}
+	snap, err := cgroup.NewSampler(s.cfg.FS, 1*time.Second).SampleCgroup(absCgDir)
+	if err != nil {
+		return false, 0
+	}
+	return true, snap.Events.OOMKill
 }
 
 func (s *Server) handleActionRollback(ctx context.Context, _ *mcp.CallToolRequest, in ActionRollbackInput) (*mcp.CallToolResult, ActionRollbackOutput, error) {
@@ -729,10 +880,30 @@ func (s *Server) handleVerifyHealth(ctx context.Context, _ *mcp.CallToolRequest,
 		return nil, VerifyHealthOutput{}, err
 	}
 
+	// Validasi anti-SSRF pada probe_url sejak awal sebelum memulai worker observasi 120 detik
+	probeURL := strings.TrimSpace(in.ProbeURL)
+	if probeURL != "" {
+		if _, uErr := ValidateLoopbackProbeURL(probeURL); uErr != nil {
+			return nil, VerifyHealthOutput{
+				IncidentID: incID,
+				Status:     "FAILED",
+				Pending:    false,
+				Healthy:    false,
+				State:      string(inc.State),
+				Message:    "probe URL rejected by SSRF policy",
+				FailureReasons: []string{
+					fmt.Sprintf("http probe %s rejected: %v", probeURL, uErr),
+				},
+				Checks: HealthChecksDetail{ProbeURLChecked: probeURL},
+			}, nil
+		}
+	}
+
 	windowSec := in.WindowSeconds
 	if windowSec <= 0 {
 		windowSec = 120
 	}
+	windowDur := time.Duration(windowSec) * time.Second
 
 	sampler := cgroup.NewSampler(s.cfg.FS, 1*time.Second)
 	sample, err := sampler.SampleCgroup(absCgDir)
@@ -740,209 +911,68 @@ func (s *Server) handleVerifyHealth(ctx context.Context, _ *mcp.CallToolRequest,
 		return nil, VerifyHealthOutput{}, fmt.Errorf("sample cgroup health on %s: %w", absCgDir, err)
 	}
 
-	var failures []string
-	psiStable := true
-	memStable := true
-
-	if sample.PSISomeAvg10 >= HealthPSIHalfSomeMax {
-		psiStable = false
-		failures = append(failures, fmt.Sprintf("live psi_some_avg10=%.2f >= %.1f", sample.PSISomeAvg10, HealthPSIHalfSomeMax))
-	}
-	if sample.PSIFullAvg10 >= HealthPSIHalfFullMax {
-		psiStable = false
-		failures = append(failures, fmt.Sprintf("live psi_full_avg10=%.2f >= %.1f", sample.PSIFullAvg10, HealthPSIHalfFullMax))
-	}
-	if sample.MemoryMax > 0 && sample.MemoryCurrent > 0 {
-		utilPct := (float64(sample.MemoryCurrent) / float64(sample.MemoryMax)) * 100.0
-		if utilPct >= MaxCgroupMemoryUtilizationPct {
-			memStable = false
-			failures = append(failures, fmt.Sprintf("live memory utilization=%.1f%% >= %.1f%% of memory.max", utilPct, MaxCgroupMemoryUtilizationPct))
-		}
-	}
-	if in.BaselineOOMKill != nil && sample.Events.OOMKill > *in.BaselineOOMKill {
-		memStable = false
-		failures = append(failures, fmt.Sprintf("new oom_kill detected (%d > baseline %d)", sample.Events.OOMKill, *in.BaselineOOMKill))
-	}
-
-	// Evaluasi seluruh titik histori PSI dan stabilitas RAM dalam jendela evaluasi 120 detik
 	now := s.cfg.Clock().UTC()
-	minutes := int(math.Ceil(float64(windowSec) / 60.0))
-	if minutes < 1 {
-		minutes = 1
+	st := s.verifyCoord.getOrInitState(incID, now, s.psiRing.CurrentSeq(), sample.Events.OOMKill)
+
+	st.finMu.Lock()
+	if st.completed && st.result != nil {
+		cached := cloneVerifyOutput(st.result)
+		st.finMu.Unlock()
+		return nil, cached, nil
 	}
-	if minutes > 10 {
-		minutes = 10
+	spec := verifySpec{
+		incidentID:          incID,
+		absCgDir:            absCgDir,
+		normCg:              normCg,
+		unit:                strings.TrimSpace(in.Unit),
+		probeURL:            probeURL,
+		windowSec:           windowSec,
+		windowDur:           windowDur,
+		baselineAt:          st.startedAt,
+		baselineSeq:         st.baselineSeq,
+		hasBaselineOOM:      st.hasBaselineOOM,
+		baselineOOMKill:     st.baselineOOMKill,
+		explicitBaselineOOM: in.BaselineOOMKill,
+		requireCoverage:     in.RequireWindowCoverage,
+		autoTransition:      in.AutoTransition,
+		generation:          st.generation,
 	}
-	cutoff := now.Add(-time.Duration(windowSec) * time.Second)
-	var (
-		windowSamples int
-		firstAt       time.Time
-		lastAt        time.Time
-		memStart      uint64
-		memEnd        uint64
-		memMin        uint64
-		memPeak       uint64
-		memSamples    int
-	)
-	for _, pt := range s.psiRing.Query(normCg, minutes, now) {
-		if pt.At.Before(cutoff) {
-			continue
-		}
-		windowSamples++
-		if firstAt.IsZero() || pt.At.Before(firstAt) {
-			firstAt = pt.At
-		}
-		if lastAt.IsZero() || pt.At.After(lastAt) {
-			lastAt = pt.At
-		}
-		if pt.SomeAvg10 >= HealthPSIHalfSomeMax {
-			if psiStable {
-				psiStable = false
-				failures = append(failures, fmt.Sprintf("window psi_some_avg10=%.2f exceeded %.1f at %s", pt.SomeAvg10, HealthPSIHalfSomeMax, pt.At.Format(time.RFC3339)))
-			}
-		}
-		if pt.FullAvg10 >= HealthPSIHalfFullMax {
-			if psiStable {
-				psiStable = false
-				failures = append(failures, fmt.Sprintf("window psi_full_avg10=%.2f exceeded %.1f at %s", pt.FullAvg10, HealthPSIHalfFullMax, pt.At.Format(time.RFC3339)))
-			}
-		}
-		if pt.MemoryCurrent > 0 {
-			if memSamples == 0 {
-				memStart = pt.MemoryCurrent
-				memMin = pt.MemoryCurrent
-				memPeak = pt.MemoryCurrent
-			} else {
-				if pt.MemoryCurrent < memMin {
-					memMin = pt.MemoryCurrent
-				}
-				if pt.MemoryCurrent > memPeak {
-					memPeak = pt.MemoryCurrent
-				}
-			}
-			memEnd = pt.MemoryCurrent
-			memSamples++
-		}
+	st.finMu.Unlock()
+
+	elapsed := now.Sub(spec.baselineAt)
+	if elapsed < 0 {
+		elapsed = 0
 	}
 
-	var spanSec int64
-	if !firstAt.IsZero() && !lastAt.IsZero() && !lastAt.Before(firstAt) {
-		spanSec = int64(lastAt.Sub(firstAt).Seconds())
+	// Selama jendela observasi forward belum terpenuhi dan insiden masih aktif, jalankan worker latar & kembalikan PENDING_VERIFICATION
+	if elapsed < windowDur && !isTerminalState(inc.State) {
+		s.startVerifyWorker(st, spec)
+		details, _, _, _ := s.collectForwardPSIDetails(spec, sample, now)
+		elapsedSec := int64(elapsed.Seconds())
+		remainingSec := int64(math.Ceil((windowDur - elapsed).Seconds()))
+		if remainingSec < 0 {
+			remainingSec = 0
+		}
+		return nil, VerifyHealthOutput{
+			IncidentID:           incID,
+			Status:               "PENDING_VERIFICATION",
+			Pending:              true,
+			Healthy:              false,
+			State:                string(inc.State),
+			Message:              fmt.Sprintf("forward verification observation in progress (%ds/%ds elapsed)", elapsedSec, windowSec),
+			ObservationStartedAt: spec.baselineAt.Format(time.RFC3339),
+			ObservationEndsAt:    spec.baselineAt.Add(windowDur).Format(time.RFC3339),
+			ElapsedSeconds:       elapsedSec,
+			RemainingSeconds:     remainingSec,
+			Checks:               details,
+		}, nil
 	}
 
-	var memGrowthPct float64
-	if memSamples >= 2 && memStart > 0 {
-		memGrowthPct = (float64(memEnd) - float64(memStart)) / float64(memStart) * 100.0
-		// Tolak kelulusan bila RAM masih terus menanjak > 15% dibanding baseline jendela pemulihan
-		if memGrowthPct > MaxVerifyMemoryGrowthPct && memEnd >= (memPeak*90)/100 {
-			memStable = false
-			failures = append(failures, fmt.Sprintf("memory unstable during %ds window: grew %.1f%% (%d -> %d bytes)", windowSec, memGrowthPct, memStart, memEnd))
-		}
+	out, err := s.finalizeForwardVerification(ctx, st, spec, now)
+	if err != nil {
+		return nil, VerifyHealthOutput{}, err
 	}
-
-	if in.RequireWindowCoverage {
-		minRequiredSpan := int64(float64(windowSec) * 0.8)
-		if windowSamples < 2 || spanSec < minRequiredSpan {
-			failures = append(failures, fmt.Sprintf("insufficient verification window coverage: samples=%d span=%ds (need >= %ds)", windowSamples, spanSec, minRequiredSpan))
-		}
-	}
-
-	details := HealthChecksDetail{
-		PSISomeAvg10:      sample.PSISomeAvg10,
-		PSIFullAvg10:      sample.PSIFullAvg10,
-		PSIStable:         psiStable,
-		MemoryCurrent:     sample.MemoryCurrent,
-		MemoryMinBytes:    memMin,
-		MemoryPeakBytes:   memPeak,
-		MemoryStartBytes:  memStart,
-		MemoryEndBytes:    memEnd,
-		MemoryGrowthPct:   math.Round(memGrowthPct*100) / 100,
-		MemoryStable:      memStable,
-		OOMKillCount:      sample.Events.OOMKill,
-		WindowSamples:     windowSamples,
-		WindowSpanSeconds: spanSec,
-	}
-
-	if unit := strings.TrimSpace(in.Unit); unit != "" {
-		details.UnitChecked = unit
-		if s.cfg.UnitInspector == nil {
-			failures = append(failures, "unit inspector unavailable")
-		} else {
-			active, stateStr, uErr := s.cfg.UnitInspector.IsActive(ctx, unit)
-			details.UnitActive = &active
-			if uErr != nil || !active {
-				failures = append(failures, fmt.Sprintf("unit %s not active (state=%s, err=%v)", unit, stateStr, uErr))
-			}
-		}
-	}
-
-	if probeURL := strings.TrimSpace(in.ProbeURL); probeURL != "" {
-		details.ProbeURLChecked = probeURL
-		if s.cfg.HTTPProber == nil {
-			failures = append(failures, "http prober unavailable")
-		} else {
-			code, pErr := s.cfg.HTTPProber.Probe(ctx, probeURL)
-			details.ProbeStatusCode = code
-			if pErr != nil || code < 200 || code >= 400 {
-				failures = append(failures, fmt.Sprintf("http probe %s unhealthy (status=%d, err=%v)", probeURL, code, pErr))
-			}
-		}
-	}
-
-	healthy := len(failures) == 0
-	rolledBack := 0
-	if s.cfg.Reflex != nil && (healthy || in.AutoTransition) {
-		// Rollback seluruh refleks L1 saat verifikasi lulus maupun saat auto-transition gagal (Requirement 9.2 & 9.3)
-		rbCount, rbErr := s.cfg.Reflex.RollbackIncident(ctx, incID)
-		rolledBack = rbCount
-		if rbErr != nil {
-			failures = append(failures, "reflex rollback warning: "+rbErr.Error())
-		}
-		if rolledBack > 0 {
-			s.broker.Publish(StreamEvent{
-				Type:       "reflex.rolled_back",
-				IncidentID: incID,
-				Severity:   inc.Severity,
-				State:      string(inc.State),
-				Summary:    fmt.Sprintf("Auto-rolled back %d L1 reflex action(s) during health verification (healthy=%t)", rolledBack, healthy),
-			})
-		}
-	}
-
-	finalState := inc.State
-	if in.AutoTransition {
-		targetState := incident.StateEscalated
-		reason := "verify_health failed: " + strings.Join(failures, "; ")
-		if healthy {
-			targetState = incident.StateResolved
-			reason = fmt.Sprintf("verify_health passed over %ds window (psi_some=%.2f, psi_full=%.2f)", windowSec, sample.PSISomeAvg10, sample.PSIFullAvg10)
-		}
-		if incident.CanTransition(inc.State, targetState) {
-			if trErr := s.cfg.Store.TransitionState(ctx, incID, targetState, "sentinel", reason); trErr == nil {
-				finalState = targetState
-				s.broker.Publish(StreamEvent{
-					Type:       "incident.updated",
-					IncidentID: incID,
-					Severity:   inc.Severity,
-					State:      string(finalState),
-					Summary:    reason,
-				})
-			}
-		}
-	}
-
-	_ = s.cfg.Store.RecordAudit(ctx, incID, "sentinel", "HEALTH_VERIFIED",
-		fmt.Sprintf(`{"healthy":%t,"state":%q,"rolled_back":%d,"psi_some_avg10":%.2f,"psi_full_avg10":%.2f,"mem_growth_pct":%.2f,"oom_kill":%d}`,
-			healthy, string(finalState), rolledBack, sample.PSISomeAvg10, sample.PSIFullAvg10, details.MemoryGrowthPct, sample.Events.OOMKill))
-
-	return nil, VerifyHealthOutput{
-		IncidentID:         incID,
-		Healthy:            healthy,
-		State:              string(finalState),
-		FailureReasons:     failures,
-		RolledBackReflexes: rolledBack,
-		Checks:             details,
-	}, nil
+	return nil, out, nil
 }
 
 func (s *Server) handlePostmortemGenerate(ctx context.Context, _ *mcp.CallToolRequest, in PostmortemGenerateInput) (*mcp.CallToolResult, PostmortemGenerateOutput, error) {
@@ -1053,15 +1083,81 @@ func verifyStepAgainstIncidentPlan(inc *incident.Incident, stepID, actionName st
 	return planHash, nil
 }
 
+var validPM2OwnerRegex = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+
+// resolvePM2Target menentukan pemilik user Linux non-root dan PM2_HOME untuk eksekusi L2 terisolasi via systemd-run.
+func (s *Server) resolvePM2Target() (string, string, error) {
+	owner := strings.TrimSpace(s.cfg.PM2Owner)
+	if owner == "" {
+		owner = strings.TrimSpace(os.Getenv("FRANKEN_PM2_USER"))
+	}
+	if owner == "" {
+		owner = strings.TrimSpace(os.Getenv("PM2_USER"))
+	}
+	if owner == "" {
+		if u, err := user.Current(); err == nil {
+			// Hindari backslash domain Windows jika berjalan di host pengembang
+			cand := u.Username
+			if idx := strings.LastIndexAny(cand, `/\`); idx != -1 {
+				cand = cand[idx+1:]
+			}
+			cand = strings.ToLower(strings.TrimSpace(cand))
+			if cand != "" && cand != "root" && validPM2OwnerRegex.MatchString(cand) {
+				owner = cand
+			}
+		}
+	}
+	if owner == "" {
+		owner = "pi"
+	}
+	if !validPM2OwnerRegex.MatchString(owner) {
+		return "", "", fmt.Errorf("invalid pm2 owner username %q", owner)
+	}
+
+	pm2Home := strings.TrimSpace(s.cfg.PM2Home)
+	if pm2Home == "" {
+		pm2Home = strings.TrimSpace(os.Getenv("FRANKEN_PM2_HOME"))
+	}
+	if pm2Home == "" {
+		pm2Home = strings.TrimSpace(os.Getenv("PM2_HOME"))
+	}
+	if pm2Home == "" {
+		if owner == "root" {
+			pm2Home = "/root/.pm2"
+		} else {
+			pm2Home = path.Join("/home", owner, ".pm2")
+		}
+	}
+	if !strings.HasPrefix(pm2Home, "/") || strings.ContainsAny(pm2Home, "\r\n\x00|;") {
+		return "", "", fmt.Errorf("invalid PM2_HOME path %q", pm2Home)
+	}
+	return owner, pm2Home, nil
+}
+
 // buildL2Command menerjemahkan aksi L2 menjadi template biner & argumen statis tanpa melibatkan shell interpreter.
-func buildL2Command(actionName string, params map[string]any, cat *policy.Catalog) (string, []string, time.Duration, error) {
+func (s *Server) buildL2Command(actionName string, params map[string]any, cat *policy.Catalog) (string, []string, time.Duration, error) {
 	switch actionName {
 	case "pm2_reload":
 		app := extractString(params, "app")
 		if !validAppArgRegex.MatchString(app) {
 			return "", nil, 0, fmt.Errorf("invalid pm2 app name %q", app)
 		}
-		return "pm2", []string{"reload", app}, 20 * time.Second, nil
+		owner, pm2Home, err := s.resolvePM2Target()
+		if err != nil {
+			return "", nil, 0, err
+		}
+		// Jalankan PM2 di unit systemd transien milik pemilik app agar bebas dari cgroup 48M dan ProtectHome Sentinel
+		return "systemd-run", []string{
+			"--wait",
+			"--pipe",
+			"--collect",
+			"--uid=" + owner,
+			"--setenv=PM2_HOME=" + pm2Home,
+			"--",
+			"pm2",
+			"reload",
+			app,
+		}, 20 * time.Second, nil
 
 	case "pm2_restart_instance":
 		app := extractString(params, "app")
@@ -1072,7 +1168,23 @@ func buildL2Command(actionName string, params map[string]any, cat *policy.Catalo
 		if !ok {
 			return "", nil, 0, errors.New("integer pm_id >= 0 is required")
 		}
-		return "pm2", []string{"restart", app, strconv.Itoa(pmID)}, 20 * time.Second, nil
+		owner, pm2Home, err := s.resolvePM2Target()
+		if err != nil {
+			return "", nil, 0, err
+		}
+		// Jalankan PM2 di unit systemd transien milik pemilik app agar bebas dari cgroup 48M dan ProtectHome Sentinel
+		return "systemd-run", []string{
+			"--wait",
+			"--pipe",
+			"--collect",
+			"--uid=" + owner,
+			"--setenv=PM2_HOME=" + pm2Home,
+			"--",
+			"pm2",
+			"restart",
+			app,
+			strconv.Itoa(pmID),
+		}, 20 * time.Second, nil
 
 	case "unit_restart":
 		unit := extractString(params, "unit")

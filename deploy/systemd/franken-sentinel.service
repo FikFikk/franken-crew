@@ -34,9 +34,13 @@ LockPersonality=yes
 RemoveIPC=yes
 PrivateDevices=yes
 ProtectControlGroups=no
+# Aksi L2 PM2 didelegasikan ke unit transien via systemd-run agar keluar dari cgroup 48M & ProtectHome Sentinel
+Environment=FRANKEN_PM2_USER=pi
+Environment=FRANKEN_PM2_HOME=/home/pi/.pm2
+EnvironmentFile=-/etc/franken/sentinel.env
 ReadWritePaths=/sys/fs/cgroup /var/lib/franken /run/franken
 
-# Isolasi namespace jaringan hanya ke AF_UNIX dan IPv4/IPv6 (Tailscale & loopback)
+# Isolasi namespace jaringan ke AF_UNIX (D-Bus systemd-run/journald) dan IPv4/IPv6 (Tailscale & loopback)
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
