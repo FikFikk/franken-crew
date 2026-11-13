@@ -8,8 +8,13 @@ import (
 )
 
 const (
-	// DefaultAlpha adalah bobot peluruhan EWMA standar sesuai spesifikasi desain (0.3).
+	// DefaultAlpha adalah bobot peluruhan EWMA standar sesuai spesifikasi desain (0.3) untuk satu sampel
+	// yang berjarak tepat satu ReferenceInterval dari pembaruan slope sebelumnya.
 	DefaultAlpha = 0.3
+	// DefaultReferenceInterval adalah jarak sampel acuan tempat Alpha berlaku apa adanya (1 detik, sesuai sampling 1 Hz).
+	DefaultReferenceInterval = 1 * time.Second
+	// DefaultMinSlopeInterval adalah rentang minimum sejak anchor slope sebelum slope boleh diperbarui (250 ms).
+	DefaultMinSlopeInterval = 250 * time.Millisecond
 	// DefaultHostReserveBytes adalah cadangan RAM host (64 MiB) saat cgroup tidak memiliki batas memory.max.
 	DefaultHostReserveBytes uint64 = 64 * 1024 * 1024
 	// MinSlopeBytesPerSec adalah batas bawah penyebut slope (1 KiB/s) untuk perhitungan TTO.
@@ -91,20 +96,30 @@ type Evaluation struct {
 
 // Config menyimpan parameter kerja Detector.
 type Config struct {
-	NodeName           string
-	HostMemTotalBytes  uint64
-	HostReserveBytes   uint64
+	NodeName          string
+	HostMemTotalBytes uint64
+	HostReserveBytes  uint64
+	// Alpha adalah bobot EWMA untuk satu sampel yang diambil tepat satu ReferenceInterval setelah pembaruan slope
+	// sebelumnya; untuk rentang lain bobotnya menjadi 1 - (1-Alpha)^(rentang/ReferenceInterval).
 	Alpha              float64
 	HysteresisDuration time.Duration
 	DebounceDuration   time.Duration
 	P3SustainDuration  time.Duration
+	// ReferenceInterval adalah jarak sampel acuan untuk Alpha sekaligus rentang minimum slope pertama (default 1 detik).
+	ReferenceInterval time.Duration
+	// MinSlopeInterval adalah rentang minimum sejak anchor slope sebelum slope diperbarui (default 250 ms). Sampel yang
+	// lebih rapat tetap dievaluasi untuk severity, namun tidak mengubah slope maupun anchor.
+	MinSlopeInterval time.Duration
 }
 
 // cgroupState menyimpan histori telemetri dan status insiden per cgroup.
 type cgroupState struct {
-	initialized    bool
-	lastBytes      uint64
-	lastAt         time.Time
+	initialized bool
+	// lastAt adalah waktu sampel in-order terbaru; sampel dengan At lebih awal dianggap basi.
+	lastAt time.Time
+	// anchorBytes dan anchorAt adalah titik acuan slope; hanya bergeser saat slope diperbarui atau counter di-reset.
+	anchorBytes    uint64
+	anchorAt       time.Time
 	hasSlope       bool
 	ewmaSlope      float64
 	lastEvents     MemoryEvents
@@ -145,6 +160,12 @@ func NewDetector(cfg Config) *Detector {
 	if cfg.P3SustainDuration <= 0 {
 		cfg.P3SustainDuration = DefaultP3SustainDuration
 	}
+	if cfg.ReferenceInterval <= 0 {
+		cfg.ReferenceInterval = DefaultReferenceInterval
+	}
+	if cfg.MinSlopeInterval <= 0 {
+		cfg.MinSlopeInterval = DefaultMinSlopeInterval
+	}
 	return &Detector{
 		cfg:    cfg,
 		states: make(map[string]*cgroupState),
@@ -166,40 +187,35 @@ func (d *Detector) Evaluate(s Sample) Evaluation {
 		d.states[s.Cgroup] = st
 	}
 
-	var deltaMax, deltaOOM, deltaOOMKill uint64
-	if !st.initialized {
-		st.initialized = true
-		st.lastBytes = s.MemoryCurrent
-		st.lastAt = s.At
-		st.lastEvents = s.Events
-	} else {
-		dt := s.At.Sub(st.lastAt).Seconds()
-		if dt > 0 {
-			diffBytes := float64(s.MemoryCurrent) - float64(st.lastBytes)
-			instSlope := diffBytes / dt
-			if !st.hasSlope {
-				st.ewmaSlope = instSlope
-				st.hasSlope = true
-			} else {
-				st.ewmaSlope = d.cfg.Alpha*instSlope + (1.0-d.cfg.Alpha)*st.ewmaSlope
-			}
-			st.lastBytes = s.MemoryCurrent
-			st.lastAt = s.At
-		}
+	limit := d.effectiveLimit(s.MemoryMax)
 
-		if s.Events.Max > st.lastEvents.Max {
-			deltaMax = s.Events.Max - st.lastEvents.Max
-		}
-		if s.Events.OOM > st.lastEvents.OOM {
-			deltaOOM = s.Events.OOM - st.lastEvents.OOM
-		}
-		if s.Events.OOMKill > st.lastEvents.OOMKill {
-			deltaOOMKill = s.Events.OOMKill - st.lastEvents.OOMKill
-		}
-		st.lastEvents = s.Events
+	// Sampel yang lebih tua dari sampel terakhir yang diproses (out-of-order) tidak boleh mengubah state apa pun.
+	// Sampel dengan At sama tetap in-order karena counter memory.events monoton.
+	if st.initialized && s.At.Before(st.lastAt) {
+		return d.evaluateStale(st, s, limit)
 	}
 
-	limit := d.effectiveLimit(s.MemoryMax)
+	var deltaMax, deltaOOM, deltaOOMKill uint64
+	switch {
+	case !st.initialized:
+		st.initialized = true
+		st.lastEvents = s.Events
+		st.resetSlopeAnchor(s)
+	case eventsCounterReset(s.Events, st.lastEvents):
+		// Counter turun berarti cgroup dihapus lalu dibuat ulang (misalnya restart unit): rebaseline seluruh counter
+		// tanpa delta, dan mulai slope dari nol karena memori cgroup baru tidak kontinu dengan cgroup lama.
+		st.lastEvents = s.Events
+		st.resetSlopeAnchor(s)
+	default:
+		// Tidak ada counter yang turun, sehingga pengurangan di bawah aman dari underflow
+		deltaMax = s.Events.Max - st.lastEvents.Max
+		deltaOOM = s.Events.OOM - st.lastEvents.OOM
+		deltaOOMKill = s.Events.OOMKill - st.lastEvents.OOMKill
+		st.lastEvents = s.Events
+		d.updateSlope(st, s)
+	}
+	st.lastAt = s.At
+
 	tto := computeTTO(s.MemoryCurrent, limit, st.hasSlope, st.ewmaSlope)
 
 	// Lacak durasi PSI some avg10 >= 10% untuk klasifikasi P3
@@ -281,6 +297,84 @@ func (d *Detector) Evaluate(s Sample) Evaluation {
 	eval.IncidentOpen = true
 	eval.IncidentID = st.activeID
 	return eval
+}
+
+// evaluateStale menilai sampel basi secara read-only: RawSeverity dihitung dari PSI/TTO sampel tersebut tanpa delta
+// memory.events, sedangkan status insiden yang dilaporkan adalah insiden aktif saat ini tanpa dibuka, ditutup, atau
+// dieskalasi.
+func (d *Detector) evaluateStale(st *cgroupState, s Sample, limit uint64) Evaluation {
+	tto := computeTTO(s.MemoryCurrent, limit, st.hasSlope, st.ewmaSlope)
+	p3Sustained := s.PSISomeAvg10 >= DefaultP3PSISomeAvg10 &&
+		!st.p3SomeSince.IsZero() && s.At.Sub(st.p3SomeSince) >= d.cfg.P3SustainDuration
+
+	eval := Evaluation{
+		Cgroup:         s.Cgroup,
+		Severity:       SeverityNone,
+		RawSeverity:    classifyRawSeverity(tto, s.PSISomeAvg10, s.PSIFullAvg10, p3Sustained, 0, 0, 0),
+		SlopeBytesPerS: st.ewmaSlope,
+		TTOSeconds:     tto,
+		LimitBytes:     limit,
+		At:             s.At,
+	}
+	if st.incidentOpen {
+		eval.Severity = st.activeSeverity
+		eval.IncidentOpen = true
+		eval.IncidentID = st.activeID
+	}
+	return eval
+}
+
+// resetSlopeAnchor menjadikan sampel s sebagai anchor slope baru dan menghapus slope lama.
+func (st *cgroupState) resetSlopeAnchor(s Sample) {
+	st.anchorBytes = s.MemoryCurrent
+	st.anchorAt = s.At
+	st.hasSlope = false
+	st.ewmaSlope = 0
+}
+
+// updateSlope memperbarui EWMA slope dari rentang penuh sejak anchor dengan bobot yang disesuaikan terhadap panjang
+// rentang, sehingga sampel jalur cepat tidak menggelembungkan slope dan sampling 1 Hz berperilaku seperti sebelumnya.
+func (d *Detector) updateSlope(st *cgroupState, s Sample) {
+	span := s.At.Sub(st.anchorAt)
+	if span < d.cfg.MinSlopeInterval {
+		// Rentang terlalu pendek (misalnya sampel jalur cepat atau At identik): pertahankan slope dan anchor agar
+		// pembaruan berikutnya memakai rentang penuh sejak anchor.
+		return
+	}
+	if !st.hasSlope && span < d.cfg.ReferenceInterval {
+		// Slope pertama baru ditetapkan setelah rentang sejak anchor pertama mencapai ReferenceInterval
+		return
+	}
+
+	instSlope := (float64(s.MemoryCurrent) - float64(st.anchorBytes)) / span.Seconds()
+	if st.hasSlope {
+		alpha := effectiveAlpha(d.cfg.Alpha, span, d.cfg.ReferenceInterval)
+		st.ewmaSlope = alpha*instSlope + (1.0-alpha)*st.ewmaSlope
+	} else {
+		st.ewmaSlope = instSlope
+		st.hasSlope = true
+	}
+	st.anchorBytes = s.MemoryCurrent
+	st.anchorAt = s.At
+}
+
+// effectiveAlpha menghitung bobot EWMA untuk satu pembaruan sepanjang span: 1 - (1-alpha)^(span/ref).
+// Bentuk -Expm1(x*Log1p(-alpha)) identik secara matematis namun tetap presisi untuk alpha atau rentang yang kecil.
+func effectiveAlpha(alpha float64, span, ref time.Duration) float64 {
+	x := span.Seconds() / ref.Seconds()
+	weight := -math.Expm1(x * math.Log1p(-alpha))
+	// Jaga bobot tetap di (0, 1] walau terjadi underflow numerik
+	return math.Min(1, math.Max(weight, math.SmallestNonzeroFloat64))
+}
+
+// eventsCounterReset melaporkan apakah ada counter memory.events yang lebih kecil dari baseline. Counter kernel
+// bersifat monoton selama umur cgroup, sehingga penurunan berarti cgroup telah dibuat ulang.
+func eventsCounterReset(cur, base MemoryEvents) bool {
+	return cur.Low < base.Low ||
+		cur.High < base.High ||
+		cur.Max < base.Max ||
+		cur.OOM < base.OOM ||
+		cur.OOMKill < base.OOMKill
 }
 
 // effectiveLimit menentukan batas memori efektif dari memory.max cgroup atau MemTotal host dikurangi cadangan.
