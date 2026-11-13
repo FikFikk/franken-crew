@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mdp/qrterminal/v3"
@@ -41,8 +42,88 @@ func HashPollOption(optionText string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// OpenWhatsAppClient menginisialisasi whatsmeow di atas modernc.org/sqlite murni Go (`CGO_ENABLED=0`).
+const (
+	waLogLevelDebug = iota
+	waLogLevelInfo
+	waLogLevelWarn
+	waLogLevelError
+)
+
+// writerLogger menulis log whatsmeow ke writer (bawaan os.Stderr) agar tidak pernah mencemari kanal MCP stdout.
+type writerLogger struct {
+	module string
+	level  int
+	out    io.Writer
+	mu     *sync.Mutex
+}
+
+// NewStderrLogger membuat logger whatsmeow yang selalu mengarahkan seluruh output log ke os.Stderr.
+func NewStderrLogger(module, minLevel string) waLog.Logger {
+	return NewWriterLogger(module, minLevel, os.Stderr)
+}
+
+// NewWriterLogger membuat logger whatsmeow yang menulis log ke writer tujuan secara aman-konkuren.
+func NewWriterLogger(module, minLevel string, out io.Writer) waLog.Logger {
+	if out == nil {
+		out = os.Stderr
+	}
+	return &writerLogger{
+		module: module,
+		level:  parseWALogLevel(minLevel),
+		out:    out,
+		mu:     &sync.Mutex{},
+	}
+}
+
+func parseWALogLevel(raw string) int {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "DEBUG":
+		return waLogLevelDebug
+	case "INFO":
+		return waLogLevelInfo
+	case "ERROR":
+		return waLogLevelError
+	default:
+		return waLogLevelWarn
+	}
+}
+
+func (l *writerLogger) logf(level int, tag, msg string, args ...any) {
+	if level < l.level {
+		return
+	}
+	formatted := fmt.Sprintf(msg, args...)
+	ts := time.Now().UTC().Format("15:04:05")
+	l.mu.Lock()
+	_, _ = fmt.Fprintf(l.out, "%s %s [%s] %s\n", ts, tag, l.module, formatted)
+	l.mu.Unlock()
+}
+
+func (l *writerLogger) Warnf(msg string, args ...any)  { l.logf(waLogLevelWarn, "WARN", msg, args...) }
+func (l *writerLogger) Errorf(msg string, args ...any) { l.logf(waLogLevelError, "ERROR", msg, args...) }
+func (l *writerLogger) Infof(msg string, args ...any)  { l.logf(waLogLevelInfo, "INFO", msg, args...) }
+func (l *writerLogger) Debugf(msg string, args ...any) { l.logf(waLogLevelDebug, "DEBUG", msg, args...) }
+
+func (l *writerLogger) Sub(module string) waLog.Logger {
+	subName := module
+	if l.module != "" {
+		subName = l.module + "/" + module
+	}
+	return &writerLogger{
+		module: subName,
+		level:  l.level,
+		out:    l.out,
+		mu:     l.mu,
+	}
+}
+
+// OpenWhatsAppClient menginisialisasi whatsmeow di atas modernc.org/sqlite murni Go (`CGO_ENABLED=0`) dengan log ke os.Stderr.
 func OpenWhatsAppClient(ctx context.Context, dbPath string, logLevel string) (*whatsmeow.Client, *sqlstore.Container, error) {
+	return OpenWhatsAppClientWithWriter(ctx, dbPath, logLevel, os.Stderr)
+}
+
+// OpenWhatsAppClientWithWriter menginisialisasi whatsmeow dan mengarahkan seluruh log ke writer tujuan (default os.Stderr).
+func OpenWhatsAppClientWithWriter(ctx context.Context, dbPath string, logLevel string, logOut io.Writer) (*whatsmeow.Client, *sqlstore.Container, error) {
 	cleanPath := strings.TrimSpace(dbPath)
 	if cleanPath == "" {
 		cleanPath = "wa-bridge-session.db"
@@ -65,8 +146,8 @@ func OpenWhatsAppClient(ctx context.Context, dbPath string, logLevel string) (*w
 	if strings.TrimSpace(logLevel) == "" {
 		logLevel = "WARN"
 	}
-	dbLog := waLog.Stdout("WA-Store", logLevel, false)
-	clientLog := waLog.Stdout("WA-Client", logLevel, false)
+	dbLog := NewWriterLogger("WA-Store", logLevel, logOut)
+	clientLog := NewWriterLogger("WA-Client", logLevel, logOut)
 
 	container, err := sqlstore.New(ctx, "sqlite", dsn, dbLog)
 	if err != nil {

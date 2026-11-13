@@ -2,16 +2,23 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/FikFikk/franken-crew/internal/approval"
+	"github.com/FikFikk/franken-crew/internal/mcpserver"
 	"github.com/FikFikk/franken-crew/internal/wabridge"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.mau.fi/whatsmeow/types/events"
@@ -48,6 +55,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+const defaultWAMCPListenFallback = "127.0.0.1:8091"
+
 type bridgeFlags struct {
 	waDBPath       string
 	sentinelURL    string
@@ -56,9 +65,24 @@ type bridgeFlags struct {
 	adminsCSV      string
 	targetJID      string
 	nodeName       string
+	mcpListen      string
 	heartbeatEvery time.Duration
 	missedMax      int
 	pollTTL        time.Duration
+}
+
+func defaultWAMCPListenAddr() string {
+	if v := strings.TrimSpace(os.Getenv("FRANKEN_WA_MCP_ADDR")); v != "" {
+		return v
+	}
+	return defaultWAMCPListenFallback
+}
+
+func defaultWABridgeURL() string {
+	if v := strings.TrimSpace(os.Getenv("FRANKEN_WA_BRIDGE_URL")); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return "http://" + defaultWAMCPListenAddr()
 }
 
 func registerBridgeFlags(fs *flag.FlagSet, f *bridgeFlags) {
@@ -69,6 +93,7 @@ func registerBridgeFlags(fs *flag.FlagSet, f *bridgeFlags) {
 	fs.StringVar(&f.adminsCSV, "admins", "", "comma-separated admin WhatsApp phone numbers or JIDs (required)")
 	fs.StringVar(&f.targetJID, "target", "", "override destination JID/group for alerts (defaults to first admin)")
 	fs.StringVar(&f.nodeName, "node", "node01", "monitored Sentinel node name")
+	fs.StringVar(&f.mcpListen, "mcp-listen", defaultWAMCPListenAddr(), "listen address for single-owner MCP HTTP endpoint (empty disables HTTP MCP server)")
 	fs.DurationVar(&f.heartbeatEvery, "heartbeat-interval", wabridge.DefaultHeartbeatInterval, "Sentinel heartbeat watch interval")
 	fs.IntVar(&f.missedMax, "missed-heartbeats", wabridge.DefaultMaxMissedHeartbeats, "consecutive missed heartbeats before Node Silent Alert")
 	fs.DurationVar(&f.pollTTL, "poll-ttl", wabridge.DefaultPollTTL, "expiration duration for WhatsApp approval polls")
@@ -112,63 +137,151 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	bridge, cleanup, err := buildBridgeRuntime(cfg, stdout, stderr)
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	runCtx, cancelRun := context.WithCancelCause(sigCtx)
+	defer cancelRun(nil)
+
+	bridge, bearerToken, cleanup, err := buildBridgeRuntime(cfg, stderr, func(fatalErr error) {
+		cancelRun(fatalErr)
+	})
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
 	defer cleanup()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	var httpErrCh chan error
+	if listenAddr := strings.TrimSpace(cfg.mcpListen); listenAddr != "" {
+		validatedAddr, valErr := mcpserver.ValidateBindAddr(listenAddr, false)
+		if valErr != nil {
+			fmt.Fprintf(stderr, "error: unsafe --mcp-listen address %q: %v\n", listenAddr, valErr)
+			return 1
+		}
+		ln, listenErr := net.Listen("tcp", validatedAddr)
+		if listenErr != nil {
+			fmt.Fprintf(stderr, "error: listen MCP HTTP %s: %v\n", validatedAddr, listenErr)
+			return 1
+		}
+		httpSrv := &http.Server{
+			Handler:           buildServeHTTPHandler(bridge, cfg.nodeName, bearerToken),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		httpErrCh = make(chan error, 1)
+		go func() {
+			if serveErr := httpSrv.Serve(ln); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+				httpErrCh <- serveErr
+				cancelRun(serveErr)
+				return
+			}
+			httpErrCh <- nil
+		}()
+		defer func() {
+			shutCtx, shutCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer shutCancel()
+			_ = httpSrv.Shutdown(shutCtx)
+		}()
+		fmt.Fprintf(stdout, "wa-bridge MCP HTTP listening on http://%s/mcp\n", ln.Addr().String())
+	}
 
 	fmt.Fprintf(stdout, "wa-bridge running (sentinel=%s, node=%s, heartbeat=%s x %d)\n",
 		cfg.sentinelURL, cfg.nodeName, cfg.heartbeatEvery, cfg.missedMax)
 
-	if err := bridge.Run(ctx); err != nil {
+	if err := bridge.Run(runCtx); err != nil {
 		fmt.Fprintf(stderr, "wa-bridge runtime error: %v\n", err)
 		return 1
+	}
+	// Keluar dengan kode non-zero jika berhenti akibat StreamReplaced, LoggedOut, atau kegagalan HTTP server (Temuan C6)
+	if cause := context.Cause(runCtx); cause != nil && !errors.Is(cause, context.Canceled) {
+		fmt.Fprintf(stderr, "wa-bridge terminated fatally: %v\n", cause)
+		return 1
+	}
+	if httpErrCh != nil {
+		select {
+		case hErr := <-httpErrCh:
+			if hErr != nil {
+				fmt.Fprintf(stderr, "wa-bridge MCP HTTP error: %v\n", hErr)
+				return 1
+			}
+		default:
+		}
 	}
 	return 0
 }
 
-func runMCPStdio(args []string, stdout, stderr io.Writer) int {
+// runMCPStdio bertindak murni sebagai proxy MCP stdio ke endpoint HTTP milik `wa-bridge serve` (Temuan C6).
+// Proses ini tidak pernah membuka database SQLite whatsmeow maupun memanggil waClient.Connect().
+func runMCPStdio(args []string, _ io.Writer, stderr io.Writer) int {
+	return runMCPStdioWithTransport(args, &mcp.StdioTransport{}, stderr)
+}
+
+func runMCPStdioWithTransport(args []string, transport mcp.Transport, stderr io.Writer) int {
 	fs := flag.NewFlagSet("wa-bridge mcp", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
-	var cfg bridgeFlags
-	registerBridgeFlags(fs, &cfg)
+	bridgeURL := fs.String("bridge-url", defaultWABridgeURL(), "base URL of the single running `wa-bridge serve` process")
+	tokenEnv := fs.String("token-env", "FRANKEN_BEARER_TOKEN", "environment variable holding HTTP bearer auth token")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
-	bridge, cleanup, err := buildBridgeRuntime(cfg, stderr, stderr)
+	bearerToken := strings.TrimSpace(os.Getenv(*tokenEnv))
+	if bearerToken == "" {
+		fmt.Fprintf(stderr, "error: bearer token env var %s is empty\n", *tokenEnv)
+		return 1
+	}
+
+	cleanURL, err := validateBridgeBaseURL(*bridgeURL)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
-	defer cleanup()
+
+	proxy := newRemoteBridgeProxy(cleanURL, bearerToken)
+	defer func() { _ = proxy.Close() }()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Jalankan bridge SSE + heartbeat loop di latar belakang sembari melayani MCP stdio ke Kiro Crew
-	go func() {
-		_ = bridge.Run(ctx)
-	}()
-
-	srv := bridge.NewMCPServer()
-	if err := srv.Run(ctx, &mcp.StdioTransport{}); err != nil {
+	srv := proxy.newMCPServer()
+	if err := srv.Run(ctx, transport); err != nil {
 		fmt.Fprintf(stderr, "wa-bridge mcp stdio error: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
-func buildBridgeRuntime(cfg bridgeFlags, _ io.Writer, stderr io.Writer) (*wabridge.Bridge, func(), error) {
+func buildServeHTTPHandler(bridge *wabridge.Bridge, nodeName, bearerToken string) http.Handler {
+	mcpSrv := bridge.NewMCPServer()
+	streamable := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server {
+		return mcpSrv
+	}, &mcp.StreamableHTTPOptions{
+		Stateless:                    false,
+		DisableLocalhostProtection:   false,
+		PropagateRequestCancellation: false,
+		SessionTimeout:               15 * time.Minute,
+	})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok",
+			"node":   nodeName,
+		})
+	})
+	mux.Handle("/mcp", mcpserver.BearerAuthMiddleware(bearerToken, streamable))
+	return mux
+}
+
+func buildBridgeRuntime(cfg bridgeFlags, stderr io.Writer, onFatal func(error)) (*wabridge.Bridge, string, func(), error) {
 	bearerToken := strings.TrimSpace(os.Getenv(cfg.tokenEnv))
 	if bearerToken == "" {
-		return nil, nil, fmt.Errorf("bearer token env var %s is empty", cfg.tokenEnv)
+		return nil, "", nil, fmt.Errorf("bearer token env var %s is empty", cfg.tokenEnv)
 	}
 
 	admins := splitCSV(cfg.adminsCSV)
@@ -176,40 +289,41 @@ func buildBridgeRuntime(cfg bridgeFlags, _ io.Writer, stderr io.Writer) (*wabrid
 		admins = splitCSV(os.Getenv("FRANKEN_WA_ADMINS"))
 	}
 	if len(admins) == 0 {
-		return nil, nil, fmt.Errorf("admin allowlist is required via --admins or FRANKEN_WA_ADMINS")
+		return nil, "", nil, fmt.Errorf("admin allowlist is required via --admins or FRANKEN_WA_ADMINS")
 	}
 
 	privKey, err := approval.LoadPrivateKey(cfg.privKeyPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("load Ed25519 private key %q: %w", cfg.privKeyPath, err)
+		return nil, "", nil, fmt.Errorf("load Ed25519 private key %q: %w", cfg.privKeyPath, err)
 	}
 	minter, err := approval.NewMinter(privKey, nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, "", nil, err
 	}
 
 	sentinelClient, err := wabridge.NewSentinelClient(cfg.sentinelURL, bearerToken)
 	if err != nil {
-		return nil, nil, err
+		return nil, "", nil, err
 	}
 
+	// Wajib arahkan seluruh log whatsmeow ke stderr agar tidak merusak stdout (Temuan C6)
 	ctx := context.Background()
-	waClient, container, err := wabridge.OpenWhatsAppClient(ctx, cfg.waDBPath, "WARN")
+	waClient, container, err := wabridge.OpenWhatsAppClientWithWriter(ctx, cfg.waDBPath, "WARN", stderr)
 	if err != nil {
 		_ = sentinelClient.Close()
-		return nil, nil, err
+		return nil, "", nil, err
 	}
 	if waClient.Store.ID == nil {
 		_ = container.Close()
 		_ = sentinelClient.Close()
-		return nil, nil, fmt.Errorf("WhatsApp session in %q is not paired yet; run `franken wa-login --db %s` first", cfg.waDBPath, cfg.waDBPath)
+		return nil, "", nil, fmt.Errorf("WhatsApp session in %q is not paired yet; run `franken wa-login --db %s` first", cfg.waDBPath, cfg.waDBPath)
 	}
 
 	messenger, err := wabridge.NewWhatsmeowMessenger(waClient)
 	if err != nil {
 		_ = container.Close()
 		_ = sentinelClient.Close()
-		return nil, nil, err
+		return nil, "", nil, err
 	}
 
 	bridge, err := wabridge.New(wabridge.Config{
@@ -229,25 +343,20 @@ func buildBridgeRuntime(cfg bridgeFlags, _ io.Writer, stderr io.Writer) (*wabrid
 	if err != nil {
 		_ = container.Close()
 		_ = sentinelClient.Close()
-		return nil, nil, err
+		return nil, "", nil, err
 	}
 
-	// Pasang event handler sebelum Connect agar PollUpdateMessage dan fallback teks tertangani penuh
+	// Pasang event handler sebelum Connect agar PollUpdateMessage, StreamReplaced, dan LoggedOut tertangani penuh
 	handlerCtx, cancelHandler := context.WithCancel(context.Background())
 	waClient.AddEventHandler(func(evt any) {
-		switch v := evt.(type) {
-		case *events.Message:
-			bridge.HandleWhatsAppEvent(handlerCtx, v)
-		case *events.LoggedOut:
-			fmt.Fprintf(stderr, "[wa-bridge] WhatsApp logged out from phone (%s); re-run franken wa-login\n", v.PermanentDisconnectDescription())
-		}
+		handleWhatsAppLifecycleEvent(handlerCtx, evt, bridge, stderr, onFatal)
 	})
 
 	if err := waClient.Connect(); err != nil {
 		cancelHandler()
 		_ = container.Close()
 		_ = sentinelClient.Close()
-		return nil, nil, fmt.Errorf("connect whatsmeow client: %w", err)
+		return nil, "", nil, fmt.Errorf("connect whatsmeow client: %w", err)
 	}
 
 	cleanup := func() {
@@ -256,7 +365,218 @@ func buildBridgeRuntime(cfg bridgeFlags, _ io.Writer, stderr io.Writer) (*wabrid
 		_ = container.Close()
 		_ = sentinelClient.Close()
 	}
-	return bridge, cleanup, nil
+	return bridge, bearerToken, cleanup, nil
+}
+
+// handleWhatsAppLifecycleEvent meneruskan pesan masuk ke bridge serta memicu exit non-zero jika sesi WA digantikan atau terputus permanen.
+func handleWhatsAppLifecycleEvent(ctx context.Context, evt any, bridge *wabridge.Bridge, stderr io.Writer, onFatal func(error)) {
+	switch v := evt.(type) {
+	case *events.Message:
+		if bridge != nil {
+			bridge.HandleWhatsAppEvent(ctx, v)
+		}
+	case *events.StreamReplaced:
+		err := fmt.Errorf("WhatsApp session replaced by another connection (%s)", v.PermanentDisconnectDescription())
+		fmt.Fprintf(stderr, "[wa-bridge] FATAL: %v\n", err)
+		if onFatal != nil {
+			onFatal(err)
+		}
+	case *events.LoggedOut:
+		err := fmt.Errorf("WhatsApp logged out from phone (%s); re-run franken wa-login", v.PermanentDisconnectDescription())
+		fmt.Fprintf(stderr, "[wa-bridge] FATAL: %v\n", err)
+		if onFatal != nil {
+			onFatal(err)
+		}
+	}
+}
+
+func validateBridgeBaseURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(strings.TrimRight(raw, "/"))
+	if trimmed == "" {
+		return "", errors.New("bridge-url is required")
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("invalid bridge-url %q", raw)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("unsupported bridge-url scheme %q", u.Scheme)
+	}
+	if _, err := mcpserver.ValidateBindAddr(u.Host, false); err != nil {
+		if u.Scheme != "https" {
+			return "", fmt.Errorf("unsafe HTTP bridge-url host %q: %w", u.Host, err)
+		}
+	}
+	return trimmed, nil
+}
+
+type bearerHeaderRT struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (rt *bearerHeaderRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.Header.Set("Authorization", "Bearer "+rt.token)
+	base := rt.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(clone)
+}
+
+type remoteBridgeProxy struct {
+	mcpEndpoint string
+	httpClient  *http.Client
+
+	mu      sync.Mutex
+	session *mcp.ClientSession
+}
+
+func newRemoteBridgeProxy(baseURL, bearerToken string) *remoteBridgeProxy {
+	return &remoteBridgeProxy{
+		mcpEndpoint: strings.TrimRight(baseURL, "/") + "/mcp",
+		httpClient: &http.Client{
+			Transport: &bearerHeaderRT{token: bearerToken},
+		},
+	}
+}
+
+func (p *remoteBridgeProxy) Close() error {
+	p.mu.Lock()
+	sess := p.session
+	p.session = nil
+	p.mu.Unlock()
+	if sess != nil {
+		return sess.Close()
+	}
+	return nil
+}
+
+func (p *remoteBridgeProxy) ensureSession(ctx context.Context) (*mcp.ClientSession, error) {
+	p.mu.Lock()
+	existing := p.session
+	p.mu.Unlock()
+	if existing != nil {
+		return existing, nil
+	}
+
+	client := mcp.NewClient(&mcp.Implementation{
+		Name:    "franken-wa-bridge-stdio-proxy",
+		Version: "0.1.0",
+	}, nil)
+	transport := &mcp.StreamableClientTransport{
+		Endpoint:             p.mcpEndpoint,
+		HTTPClient:           p.httpClient,
+		DisableStandaloneSSE: true,
+	}
+	sess, err := client.Connect(ctx, transport, nil)
+	if err != nil {
+		return nil, fmt.Errorf("connect wa-bridge serve at %s (is `wa-bridge serve` running?): %w", p.mcpEndpoint, err)
+	}
+
+	p.mu.Lock()
+	if p.session != nil {
+		p.mu.Unlock()
+		_ = sess.Close()
+		return p.session, nil
+	}
+	p.session = sess
+	p.mu.Unlock()
+	return sess, nil
+}
+
+func (p *remoteBridgeProxy) callTool(ctx context.Context, name string, args any, out any) error {
+	sess, err := p.ensureSession(ctx)
+	if err != nil {
+		return err
+	}
+	res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+		Name:      name,
+		Arguments: args,
+	})
+	if err != nil {
+		// Pulihkan sesi hanya jika session HTTP kedaluwarsa (404 / Session not found) agar tool non-idempoten aman
+		if strings.Contains(strings.ToLower(err.Error()), "session") || strings.Contains(err.Error(), "404") {
+			_ = p.Close()
+			if newSess, recErr := p.ensureSession(ctx); recErr == nil {
+				res, err = newSess.CallTool(ctx, &mcp.CallToolParams{
+					Name:      name,
+					Arguments: args,
+				})
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("forward %s to wa-bridge serve: %w", name, err)
+		}
+	}
+	if res.IsError {
+		for _, c := range res.Content {
+			if tc, ok := c.(*mcp.TextContent); ok && tc.Text != "" {
+				return errors.New(tc.Text)
+			}
+		}
+		return fmt.Errorf("remote tool %s returned error", name)
+	}
+	if out == nil || res.StructuredContent == nil {
+		return nil
+	}
+	raw, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		return fmt.Errorf("marshal proxy response %s: %w", name, err)
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("decode proxy response %s: %w", name, err)
+	}
+	return nil
+}
+
+func (p *remoteBridgeProxy) newMCPServer() *mcp.Server {
+	srv := mcp.NewServer(&mcp.Implementation{
+		Name:    "franken-wa-bridge",
+		Version: "0.1.0",
+	}, &mcp.ServerOptions{
+		Instructions: "Stdio MCP proxy to the single `wa-bridge serve` WhatsApp owner process.",
+		SchemaCache:  mcp.NewSchemaCache(),
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "wa_notify",
+		Description: "Send rate-limited, redacted incident alert to WhatsApp admin.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in wabridge.WANotifyInput) (*mcp.CallToolResult, wabridge.WANotifyOutput, error) {
+		var out wabridge.WANotifyOutput
+		err := p.callTool(ctx, "wa_notify", in, &out)
+		return nil, out, err
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "wa_request_approval",
+		Description: "Send Native WhatsApp Poll for human approval of a validated L2 remediation plan.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in wabridge.WARequestApprovalInput) (*mcp.CallToolResult, wabridge.WARequestApprovalOutput, error) {
+		var out wabridge.WARequestApprovalOutput
+		err := p.callTool(ctx, "wa_request_approval", in, &out)
+		return nil, out, err
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "wa_await_decision",
+		Description: "Wait for allowlisted admin vote/reply and return GRANTED (with single-use Ed25519 token), ROLLED_BACK, DENIED, or EXPIRED.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in wabridge.WAAwaitDecisionInput) (*mcp.CallToolResult, wabridge.ApprovalDecision, error) {
+		var out wabridge.ApprovalDecision
+		err := p.callTool(ctx, "wa_await_decision", in, &out)
+		return nil, out, err
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "wa_send_report",
+		Description: "Send terminal incident resolution or escalation report to WhatsApp admin.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in wabridge.WASendReportInput) (*mcp.CallToolResult, wabridge.WANotifyOutput, error) {
+		var out wabridge.WANotifyOutput
+		err := p.callTool(ctx, "wa_send_report", in, &out)
+		return nil, out, err
+	})
+
+	return srv
 }
 
 func splitCSV(raw string) []string {
@@ -273,8 +593,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: wa-bridge <command> [options]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Commands:")
-	fmt.Fprintln(w, "  serve    Start headless WhatsApp SSE listener, Poll handler, and heartbeat monitor")
+	fmt.Fprintln(w, "  serve    Start single-owner WhatsApp daemon (SSE listener, Poll signer, Heartbeat, and MCP HTTP)")
 	fmt.Fprintln(w, "  login    Pair WhatsApp session via terminal QR code using modernc SQLite store")
-	fmt.Fprintln(w, "  mcp      Run wa-bridge MCP stdio tools alongside the SSE event loop")
+	fmt.Fprintln(w, "  mcp      Forward MCP stdio JSON-RPC to the running `wa-bridge serve` process")
 }
 
