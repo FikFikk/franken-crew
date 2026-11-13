@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/FikFikk/franken-crew/internal/redact"
@@ -16,6 +17,26 @@ import (
 // Store mengelola penyimpanan data persisten SQLite untuk insiden, bukti telemetri, dan audit.
 type Store struct {
 	db *sql.DB
+	// clock opsional menggantikan time.Now untuk stempel created_at/updated_at/closed_at (simulasi & test)
+	clock atomic.Pointer[func() time.Time]
+}
+
+// SetClock mengganti sumber waktu stempel yang ditulis Store (default time.Now UTC). Simulasi lab memakainya
+// agar audit trail mengikuti jam simulasi; nil mengembalikan jam sistem.
+func (s *Store) SetClock(clock func() time.Time) {
+	if clock == nil {
+		s.clock.Store(nil)
+		return
+	}
+	s.clock.Store(&clock)
+}
+
+// now mengembalikan waktu UTC dari jam injeksi bila ada, atau jam sistem.
+func (s *Store) now() time.Time {
+	if fn := s.clock.Load(); fn != nil {
+		return (*fn)().UTC()
+	}
+	return time.Now().UTC()
 }
 
 const schemaDDL = `
@@ -114,7 +135,7 @@ func (s *Store) Close() error {
 
 // CreateIncident mencatat insiden baru ke database.
 func (s *Store) CreateIncident(ctx context.Context, inc *Incident) error {
-	now := time.Now().UTC()
+	now := s.now()
 	if inc.OpenedAt.IsZero() {
 		inc.OpenedAt = now
 	}
@@ -250,7 +271,7 @@ func (s *Store) ClaimIncident(ctx context.Context, incidentID, claimer string) (
 		}
 	}
 
-	now := time.Now().UTC()
+	now := s.now()
 	res, err := tx.ExecContext(ctx, `
 	UPDATE incidents SET state = ?, updated_at = ?
 	WHERE id = ? AND state IN (?, ?);
@@ -285,7 +306,7 @@ func (s *Store) ClaimIncident(ctx context.Context, incidentID, claimer string) (
 
 // SaveTriage menyimpan payload JSON hasil klasifikasi triage agen Sentry pada rekaman insiden.
 func (s *Store) SaveTriage(ctx context.Context, incidentID, triageJSON string) error {
-	now := time.Now().UTC()
+	now := s.now()
 	res, err := s.db.ExecContext(ctx, `
 	UPDATE incidents SET triage_json = ?, updated_at = ? WHERE id = ?;
 	`, triageJSON, now, incidentID)
@@ -304,7 +325,7 @@ func (s *Store) SaveTriage(ctx context.Context, incidentID, triageJSON string) e
 
 // SavePlan menyimpan payload JSON rencana mitigasi tervalidasi pada rekaman insiden.
 func (s *Store) SavePlan(ctx context.Context, incidentID, planJSON string) error {
-	now := time.Now().UTC()
+	now := s.now()
 	res, err := s.db.ExecContext(ctx, `
 	UPDATE incidents SET plan_json = ?, updated_at = ? WHERE id = ?;
 	`, planJSON, now, incidentID)
@@ -314,6 +335,37 @@ func (s *Store) SavePlan(ctx context.Context, incidentID, planJSON string) error
 	affected, err := res.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("save plan rows affected %s: %w", incidentID, err)
+	}
+	if affected == 0 {
+		return ErrIncidentNotFound
+	}
+	return nil
+}
+
+// SavePlanWithTriage menyimpan plan tervalidasi dan (bila tidak kosong) triage Sentry dalam satu UPDATE atomik,
+// sehingga pengajuan yang diterima tidak pernah meninggalkan plan tanpa triage pasangannya. triageJSON kosong
+// mempertahankan triage yang sudah tersimpan.
+func (s *Store) SavePlanWithTriage(ctx context.Context, incidentID, planJSON, triageJSON string) error {
+	now := s.now()
+	var (
+		res sql.Result
+		err error
+	)
+	if strings.TrimSpace(triageJSON) == "" {
+		res, err = s.db.ExecContext(ctx, `
+		UPDATE incidents SET plan_json = ?, updated_at = ? WHERE id = ?;
+		`, planJSON, now, incidentID)
+	} else {
+		res, err = s.db.ExecContext(ctx, `
+		UPDATE incidents SET plan_json = ?, triage_json = ?, updated_at = ? WHERE id = ?;
+		`, planJSON, triageJSON, now, incidentID)
+	}
+	if err != nil {
+		return fmt.Errorf("save plan and triage for %s: %w", incidentID, err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("save plan and triage rows affected %s: %w", incidentID, err)
 	}
 	if affected == 0 {
 		return ErrIncidentNotFound
@@ -353,7 +405,7 @@ func (s *Store) TransitionState(ctx context.Context, id string, target State, ac
 		return fmt.Errorf("%w: cannot transition from %s to %s", ErrInvalidTransition, currentState, target)
 	}
 
-	now := time.Now().UTC()
+	now := s.now()
 	var closedAt *time.Time
 	if target == StateResolved || target == StateEscalated || target == StateDismissed || target == StateExpired {
 		closedAt = &now
@@ -400,7 +452,7 @@ func (s *Store) TransitionState(ctx context.Context, id string, target State, ac
 // SaveEvidence menyimpan snapshot bukti telemetri setelah menyensor informasi rahasia secara otomatis.
 func (s *Store) SaveEvidence(ctx context.Context, snapshot *EvidenceSnapshot) error {
 	if snapshot.CapturedAt.IsZero() {
-		snapshot.CapturedAt = time.Now().UTC()
+		snapshot.CapturedAt = s.now()
 	}
 
 	// Pastikan seluruh payload mentah maupun tersensor dibersihkan sebelum masuk ke SQLite
@@ -450,7 +502,7 @@ func (s *Store) GetEvidenceByIncident(ctx context.Context, incidentID string) ([
 
 // SaveReflexAction mencatat aksi refleks L1 ke database dengan masa kadaluarsa TTL.
 func (s *Store) SaveReflexAction(ctx context.Context, action *ReflexAction) error {
-	now := time.Now().UTC()
+	now := s.now()
 	if action.AppliedAt.IsZero() {
 		action.AppliedAt = now
 	}
@@ -609,7 +661,7 @@ func (s *Store) RecordAudit(ctx context.Context, incidentID, actor, eventType, p
 	INSERT INTO audit_trail (incident_id, actor, event_type, payload_json, created_at)
 	VALUES (?, ?, ?, ?, ?);
 	`
-	_, err := s.db.ExecContext(ctx, query, incidentID, actor, eventType, payloadJSON, time.Now().UTC())
+	_, err := s.db.ExecContext(ctx, query, incidentID, actor, eventType, payloadJSON, s.now())
 	if err != nil {
 		return fmt.Errorf("insert audit: %w", err)
 	}
@@ -645,7 +697,7 @@ func (s *Store) ConsumeNonce(ctx context.Context, nonce, incidentID, planHash st
 	INSERT INTO nonces (nonce, bound_incident_id, bound_plan_hash, consumed_at)
 	VALUES (?, ?, ?, ?);
 	`
-	_, err := s.db.ExecContext(ctx, query, nonce, incidentID, planHash, time.Now().UTC())
+	_, err := s.db.ExecContext(ctx, query, nonce, incidentID, planHash, s.now())
 	if err != nil {
 		// Pelanggaran UNIQUE constraint pada kolom primary key nonce
 		if strings.Contains(err.Error(), "UNIQUE") || strings.Contains(err.Error(), "constraint failed") {
@@ -657,4 +709,3 @@ func (s *Store) ConsumeNonce(ctx context.Context, nonce, incidentID, planHash st
 	_ = s.RecordAudit(ctx, incidentID, "approval-engine", "NONCE_CONSUMED", fmt.Sprintf(`{"nonce":"%s","plan_hash":"%s"}`, nonce, planHash))
 	return nil
 }
-

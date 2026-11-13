@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FrankenCrew: self-healing ops for small Linux servers</title>
+  <meta name="description" content="A Go kernel Sentinel with reversible reflexes inside a 250 ms budget, a Kiro Crew of AI agents that plans the fix, and a WhatsApp poll that keeps a human in charge. Replay real engine runs in the Graveyard.">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#07080c">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="FrankenCrew: stitched from spare parts, never sleeps">
+  <meta property="og:description" content="Kernel reflexes in Go, a Kiro Crew of agents, and human approval over WhatsApp for small Linux servers.">
+  <meta property="og:url" content="https://frankencrew.fikfikk.my.id/">
+  <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./assets/site.css">
+  <script type="module" src="./assets/site.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <div class="wrap">
+      <a class="brand" href="#top" aria-label="FrankenCrew home">
+        <img src="./assets/favicon.svg" width="28" height="28" alt="">
+        <span>FrankenCrew</span>
+      </a>
+      <nav class="nav-links" aria-label="Sections">
+        <a href="#how">How it works</a>
+        <a href="#graveyard">Graveyard</a>
+        <a href="#kiro">Built with Kiro</a>
+        <a href="https://github.com/FikFikk/franken-crew" rel="noopener">GitHub</a>
+      </nav>
+      <span id="status" class="status" data-state="checking" role="status" aria-live="polite">
+        <i aria-hidden="true"></i><span class="status-text">Checking Sentinel…</span>
+      </span>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow"><svg class="bolt" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg> Kiroween 2026 · Frankenstein category</p>
+          <h1>Stitched from spare parts. <span class="grad">Never sleeps.</span> So you can.</h1>
+          <p class="lede">FrankenCrew keeps small Linux servers alive at 3 a.m. A Go Sentinel reads kernel pressure signals and applies a reversible reflex within a 250 ms budget. A Kiro Crew of AI agents works out the real fix. Nothing risky runs until a human approves it from a WhatsApp poll.</p>
+          <div class="cta">
+            <a class="btn primary" href="#graveyard">Watch an incident replay</a>
+            <a class="btn" href="https://github.com/FikFikk/franken-crew" rel="noopener">View source on GitHub</a>
+          </div>
+        </div>
+        <aside class="teaser" id="teaser" aria-label="Latest replayed incident" hidden>
+          <div class="teaser-head">
+            <span class="pill" data-teaser="state">RESOLVED</span>
+            <span class="teaser-id" data-teaser="id"></span>
+          </div>
+          <p class="teaser-title" data-teaser="title"></p>
+          <ol class="teaser-log" data-teaser="log"></ol>
+          <p class="teaser-foot" data-teaser="foot"></p>
+        </aside>
+      </div>
+
+      <div class="wrap">
+        <div class="install" id="install" data-tabs>
+          <div class="install-head" role="tablist" aria-label="Install options">
+            <button type="button" role="tab" id="itab-go" aria-controls="ipanel-go" aria-selected="true">Go</button>
+            <button type="button" role="tab" id="itab-crew" aria-controls="ipanel-crew" aria-selected="false" tabindex="-1">Kiro Crew app</button>
+            <button type="button" role="tab" id="itab-src" aria-controls="ipanel-src" aria-selected="false" tabindex="-1">From source</button>
+            <button type="button" class="copy" data-copy aria-label="Copy install commands">Copy</button>
+          </div>
+          <div role="tabpanel" id="ipanel-go" aria-labelledby="itab-go">
+            <pre><code>go install github.com/FikFikk/franken-crew/cmd/franken@latest
+go install github.com/FikFikk/franken-crew/cmd/wa-bridge@latest</code></pre>
+          </div>
+          <div role="tabpanel" id="ipanel-crew" aria-labelledby="itab-crew" hidden>
+            <pre><code>git clone https://github.com/FikFikk/franken-crew.git
+kirocrew app install "$PWD/franken-crew"
+<span class="c"># then trust and enable it under Apps &gt; Library; the Graveyard appears in the sidebar</span></code></pre>
+          </div>
+          <div role="tabpanel" id="ipanel-src" aria-labelledby="itab-src" hidden>
+            <pre><code>git clone https://github.com/FikFikk/franken-crew.git &amp;&amp; cd franken-crew
+go test ./... &amp;&amp; go build -o bin/ ./cmd/...
+./bin/franken lab serve --listen 127.0.0.1:3008   <span class="c"># this dashboard</span></code></pre>
+          </div>
+        </div>
+
+        <dl class="stats" aria-describedby="stats-note">
+          <div><dt>median L1 reflex latency</dt><dd data-stat="reflex">–</dd></div>
+          <div><dt>L2 runs approved by a human</dt><dd data-stat="approved">–</dd></div>
+          <div><dt>unsafe actions blocked</dt><dd data-stat="blocked">–</dd></div>
+          <div><dt data-stat="incidents-detail">incidents replayed</dt><dd data-stat="incidents">–</dd></div>
+        </dl>
+        <p class="stats-note" id="stats-note" data-stat="source">Figures come from the replay dataset in the Graveyard below.</p>
+      </div>
+    </section>
+
+    <section class="section" id="how" aria-labelledby="how-title">
+      <div class="wrap">
+        <p class="kicker">How it works</p>
+        <h2 id="how-title">One monster, four organs</h2>
+        <p class="sub">Each part does one job and has no way to do the others' jobs. The Sentinel can't run L2 actions, the agents can't skip policy, and nothing reaches systemd without a human-signed token.</p>
+        <div class="organs">
+          <article class="organ amber">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
+            <h3><small>Reflexes</small>Sentinel, in Go</h3>
+            <p>Watches PSI, cgroup v2 <code>memory.events</code>, and journald. On P1/P2 pressure it applies one reversible L1 reflex, such as <code>memory.reclaim</code> or a <code>MemoryHigh</code> throttle, with a TTL and a persistent rollback.</p>
+            <code>internal/sentinel · internal/reflex</code>
+          </article>
+          <article class="organ violet">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4a3 3 0 0 0-3 3v.5A3 3 0 0 0 4 10.3 3 3 0 0 0 5 15a3 3 0 0 0 4 3.8V4z"/><path d="M15 4a3 3 0 0 1 3 3v.5a3 3 0 0 1 2 2.8 3 3 0 0 1-1 4.7 3 3 0 0 1-4 3.8V4z"/></svg>
+            <h3><small>Brain</small>A Kiro Crew</h3>
+            <p><code>franken-conductor</code> wakes on wa-bridge webhooks and spawns specialists: the Sentry triages, the Architect writes a plan, the Remediator asks for approval and then executes.</p>
+            <code>app.json · .kiro/agents</code>
+          </article>
+          <article class="organ green">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6z"/><path d="m9 12 2 2 4-4"/></svg>
+            <h3><small>Hands</small>A policy gate</h3>
+            <p>Every plan is checked against <code>policy/actions.yaml</code>: allowlisted actions only, protected units and PID 1 refused, targets kept inside the incident's cgroup. Each step needs its own single-use Ed25519 token.</p>
+            <code>internal/policy · internal/approval</code>
+          </article>
+          <article class="organ pink">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/><path d="m9.5 10 1.8 1.8 3.4-3.6"/></svg>
+            <h3><small>Conscience</small>WhatsApp approval</h3>
+            <p>wa-bridge sends a poll to allowlisted admins. A vote mints one token per plan step. Afterwards the Sentinel watches memory and PSI for a forward window before it closes the incident or escalates.</p>
+            <code>cmd/wa-bridge · mcpserver/verify_worker.go</code>
+          </article>
+        </div>
+        <ol class="flow" aria-label="Incident flow">
+          <li>PSI spike</li>
+          <li>L1 reflex</li>
+          <li>Crew triage</li>
+          <li>Policy-checked plan</li>
+          <li>WhatsApp poll</li>
+          <li>Per-step tokens</li>
+          <li>Verify window</li>
+          <li>Postmortem</li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section graveyard-section" id="graveyard" aria-labelledby="gy-title">
+      <div class="wrap">
+        <p class="kicker">Interactive replay</p>
+        <h2 id="gy-title">Walk through the Graveyard</h2>
+        <p class="sub">Each grave is a full incident run through the real engine: PSI spike, Sentinel reflex, Crew chatter, the WhatsApp approval poll, health verification, and the postmortem it left behind. Press play, scrub the timeline, or click any event.</p>
+        <div id="graveyard-app" class="graveyard-mount"></div>
+        <noscript><p class="noscript">The replay needs JavaScript. The raw data is at <a href="./data/replay.json">data/replay.json</a>.</p></noscript>
+      </div>
+    </section>
+
+    <section class="section" id="kiro" aria-labelledby="kiro-title">
+      <div class="wrap">
+        <p class="kicker">Built with Kiro</p>
+        <h2 id="kiro-title">Every organ came out of a spec</h2>
+        <p class="sub">Kiro drove the build from requirements to property tests, and Kiro Crew runs the agents in production. Every card links to the file that does the work.</p>
+        <div class="kiro-grid">
+          <a class="kcard" href="https://github.com/FikFikk/franken-crew/tree/main/.kiro/specs/server-incident-remediation" rel="noopener">
+            <span class="tag">Specs</span>
+            <h3>EARS requirements to property tests</h3>
+            <p>Twelve requirements, a design with correctness properties P1 to P4, and a task list. The properties became property-based tests with <code>pgregory.net/rapid</code>.</p>
+            <span class="path">.kiro/specs/server-incident-remediation/</span>
+          </a>
+          <a class="kcard" href="https://github.com/FikFikk/franken-crew/tree/main/.kiro/steering" rel="noopener">
+            <span class="tag">Steering</span>
+            <h3>Rules that load when they matter</h3>
+            <p>Product, tech, structure, and project rules load on every turn. <code>linux-kernel.md</code> loads only while editing the PSI, cgroup, and kernelfs packages; the incident runbook loads on request.</p>
+            <span class="path">.kiro/steering/</span>
+          </a>
+          <a class="kcard" href="https://github.com/FikFikk/franken-crew/tree/main/.kiro/hooks" rel="noopener">
+            <span class="tag">Hooks</span>
+            <h3>Guards on the agent's own hands</h3>
+            <p>A <code>PreToolUse</code> hook pipes every franken-sentinel and franken-wa MCP call through <code>franken guard --audit</code>, which records a redacted audit row and exits 2 to block a protected target. File-save hooks re-test the executor, policy catalog, and redaction code, and a Stop hook runs vet and the full suite.</p>
+            <span class="path">.kiro/hooks/</span>
+          </a>
+          <a class="kcard" href="https://github.com/FikFikk/franken-crew/tree/main/internal/mcpserver" rel="noopener">
+            <span class="tag">MCP</span>
+            <h3>Two MCP servers, one trust boundary</h3>
+            <p><code>franken-sentinel</code> serves tools such as <code>incident_claim</code>, <code>plan_submit</code>, <code>action_execute</code>, and <code>verify_health</code> over Streamable HTTP with bearer auth. <code>franken-wa</code> adds <code>wa_request_approval</code>.</p>
+            <span class="path">internal/mcpserver · internal/wabridge</span>
+          </a>
+          <a class="kcard" href="https://github.com/FikFikk/franken-crew/blob/main/app.json" rel="noopener">
+            <span class="tag">Kiro Crew app</span>
+            <h3>A conductor and three specialists</h3>
+            <p><code>app.json</code> ships four agents, three skills, both MCP servers, an incident sweep and a morning digest cron, and this Graveyard as a dashboard page.</p>
+            <span class="path">app.json · .kiro/agents/</span>
+          </a>
+          <a class="kcard" href="https://github.com/FikFikk/franken-crew/tree/main/.kiro/skills" rel="noopener">
+            <span class="tag">Skills</span>
+            <h3>Know-how on demand</h3>
+            <p><code>linux-memory-forensics</code>, <code>remediation-runbooks</code>, and <code>incident-spec-writer</code> load only when a specialist needs them, which keeps every agent's context small.</p>
+            <span class="path">.kiro/skills/</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section end" aria-labelledby="end-title">
+      <div class="wrap">
+        <h2 id="end-title">Give your server a crew that never sleeps.</h2>
+        <p class="sub">Built for Raspberry Pi class boxes: static arm64 and amd64 binaries, pure Go, no CGO. MIT licensed.</p>
+        <div class="cta">
+          <a class="btn primary" href="#install">Install FrankenCrew</a>
+          <a class="btn" href="https://github.com/FikFikk/franken-crew/blob/main/docs/BLUEPRINT.md" rel="noopener">Read the blueprint</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p>FrankenCrew · <a href="https://github.com/FikFikk/franken-crew/blob/main/LICENSE" rel="noopener">MIT License</a> · Built for Kiroween 2026</p>
+      <p class="disclosure">Unless a replay is labelled <em>Recording</em>, the data on this page comes from <code>franken lab simulate</code>: the real detector, reflex engine, policy, approval verifier, and postmortem generator, driven against an in-memory cgroup and fake systemd. Latency figures are in-process timings, not hardware measurements.</p>
+    </div>
+  </footer>
+</body>
+</html>

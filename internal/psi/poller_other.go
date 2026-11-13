@@ -16,4 +16,3 @@ func newOSTriggerPoller() TriggerPoller {
 func (p *fallbackOSTriggerPoller) Watch(_ context.Context, _ string, _ TriggerSpec, _ func()) error {
 	return ErrTriggerUnsupported
 }
-

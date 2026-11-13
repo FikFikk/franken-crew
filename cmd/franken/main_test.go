@@ -425,4 +425,3 @@ func TestCLI_PublicKeyFailFast(t *testing.T) {
 		cleanup()
 	}
 }
-

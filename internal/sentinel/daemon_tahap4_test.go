@@ -330,4 +330,3 @@ func TestDaemon_ConsumeJournalEventsRedactsAndIsolatesUnmatchedUnits(t *testing.
 		}
 	}
 }
-

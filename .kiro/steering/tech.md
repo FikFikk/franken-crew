@@ -6,7 +6,8 @@ inclusion: always
 
 ## Backend (`franken` Single Binary)
 
-- **Language:** Go 1.26+ (`CGO_ENABLED=0` static builds for `linux/arm64` and `linux/amd64`)
+- **Language:** Go 1.26.11+ (`go.mod` pins the patched toolchain; `CGO_ENABLED=0` static builds for `linux/arm64` and `linux/amd64`)
+- **Security gate:** `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` must report no vulnerabilities before a release
 - **Storage:** `modernc.org/sqlite` (WAL mode, `synchronous=NORMAL`, `foreign_keys=ON`)
 - **MCP Transport:** `github.com/modelcontextprotocol/go-sdk/mcp` v1.8.0 (Streamable HTTP/SSE and stdio JSON-RPC)
 - **Cryptography:** Stdlib `crypto/ed25519`, PKCS#8 (`0600`) / PKIX (`0644`), canonical JSON SHA-256 plan binding, single-use SQLite nonces

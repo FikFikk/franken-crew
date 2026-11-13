@@ -89,7 +89,7 @@ stateDiagram-v2
 
 ## Detection Model
 
-- `slope = EWMA(Δmemory.current / Δt, α = 0.3)` sampled at 1 Hz.
+- `slope = EWMA(Δmemory.current / Δt)` with α = 0.3 for a 1 s gap (1 Hz sampling); for any other gap Δt the weight is `1 − (1 − α)^(Δt / 1 s)`, and the slope updates only after a 250 ms minimum span, so event-driven samples cannot fake a steep slope.
 - `limit = memory.max` if set, else host `MemTotal − reserve(64 MiB)`.
 - `TTO = (limit − memory.current) / max(slope, 1 KiB/s)`; `null` when slope ≤ 0.
 - Debounce: a cgroup cannot open a new incident within 5 min of closing the previous one; it re-opens the old one.

@@ -64,6 +64,115 @@ func TestSystemdUnits_HardeningDirectives(t *testing.T) {
 	}
 }
 
+func TestSystemdUnits_LabServiceHardening(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join("systemd", "franken-lab.service")
+	unit := parseUnitDirectives(t, path)
+	svc := unit["Service"]
+	if svc == nil {
+		t.Fatalf("%s must have a [Service] section", path)
+	}
+
+	// Setiap direktif wajib muncul tepat sekali dengan nilai persis; CapabilityBoundingSet kosong mencabut semua kapabilitas
+	exact := map[string]string{
+		"ExecStart":             "/usr/local/bin/franken lab serve --listen 127.0.0.1:3008 --data-dir /var/lib/franken/replays --sentinel ${FRANKEN_SENTINEL_URL} --token-env FRANKEN_BEARER_TOKEN",
+		"EnvironmentFile":       "-/etc/franken/franken.env",
+		"DynamicUser":           "yes",
+		"NoNewPrivileges":       "yes",
+		"ProtectSystem":         "strict",
+		"ProtectHome":           "yes",
+		"PrivateTmp":            "yes",
+		"PrivateDevices":        "yes",
+		"CapabilityBoundingSet": "",
+		"SystemCallFilter":      "@system-service",
+		"MemoryMax":             "32M",
+		"Restart":               "on-failure",
+	}
+	for key, want := range exact {
+		got, ok := svc[key]
+		if !ok {
+			t.Errorf("%s missing required directive %s=%s", path, key, want)
+			continue
+		}
+		if len(got) != 1 || got[0] != want {
+			t.Errorf("%s: %s = %q, want exactly one %q", path, key, got, want)
+		}
+	}
+
+	families := svc["RestrictAddressFamilies"]
+	if len(families) != 1 || !sameFieldSet(families[0], "AF_INET AF_INET6 AF_UNIX") {
+		t.Errorf("%s: RestrictAddressFamilies = %q, want exactly AF_INET AF_INET6 AF_UNIX", path, families)
+	}
+
+	// Dashboard publik hanya membaca: tanpa user statis, jalur tulis, direktori state, atau kapabilitas ambient
+	for _, key := range []string{"User", "Group", "SupplementaryGroups", "AmbientCapabilities", "ReadWritePaths", "StateDirectory", "CacheDirectory", "LogsDirectory", "ExecStartPre", "PermissionsStartOnly"} {
+		if _, ok := svc[key]; ok {
+			t.Errorf("%s must not set %s for the read-only public dashboard", path, key)
+		}
+	}
+
+	// /var/lib disembunyikan kecuali direktori replay (read-only) agar DB Sentinel dan sesi WhatsApp tidak terlihat
+	if got := svc["TemporaryFileSystem"]; len(got) != 1 || got[0] != "/var/lib:ro" {
+		t.Errorf("%s: TemporaryFileSystem = %q, want /var/lib:ro", path, got)
+	}
+	if got := svc["BindReadOnlyPaths"]; len(got) != 1 || got[0] != "-/var/lib/franken/replays" {
+		t.Errorf("%s: BindReadOnlyPaths = %q, want -/var/lib/franken/replays", path, got)
+	}
+
+	if got := unit["Install"]["WantedBy"]; len(got) != 1 || got[0] != "multi-user.target" {
+		t.Errorf("%s: WantedBy = %q, want multi-user.target", path, got)
+	}
+}
+
+// parseUnitDirectives membaca unit systemd menjadi section -> key -> nilai (sesuai urutan kemunculan).
+func parseUnitDirectives(t *testing.T, path string) map[string]map[string][]string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read systemd unit %s: %v", path, err)
+	}
+	sections := map[string]map[string][]string{}
+	current := ""
+	for i, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			current = strings.TrimSuffix(strings.TrimPrefix(line, "["), "]")
+			if sections[current] == nil {
+				sections[current] = map[string][]string{}
+			}
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || current == "" || strings.HasSuffix(line, `\`) {
+			t.Fatalf("%s:%d: unsupported unit line %q", path, i+1, line)
+		}
+		key = strings.TrimSpace(key)
+		sections[current][key] = append(sections[current][key], strings.TrimSpace(value))
+	}
+	return sections
+}
+
+func sameFieldSet(got, want string) bool {
+	g, w := strings.Fields(got), strings.Fields(want)
+	if len(g) != len(w) {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, f := range g {
+		seen[f] = true
+	}
+	for _, f := range w {
+		if !seen[f] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestKiroConfigurations_ValidJSONAndNoRawShell(t *testing.T) {
 	t.Parallel()
 
@@ -281,4 +390,3 @@ func TestKiroConfigurations_ValidJSONAndNoRawShell(t *testing.T) {
 		}
 	}
 }
-

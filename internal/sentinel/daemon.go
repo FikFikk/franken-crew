@@ -32,6 +32,9 @@ const (
 	defaultRollbackInterval   = 1 * time.Second
 	defaultRediscoverInterval = 10 * time.Second
 	maxDiscoveredCgroups      = 32
+	// defaultRingWriteInterval mencegah banjir inotify (~100/detik saat throttling memory.high) mengusir
+	// ring 600 titik yang dirancang menampung ~10 menit histori.
+	defaultRingWriteInterval = 500 * time.Millisecond
 )
 
 // Config menyimpan seluruh dependensi dan parameter runtime untuk daemon Sentinel.
@@ -56,6 +59,13 @@ type Config struct {
 	Clock            func() time.Time
 	// RediscoverInterval mengatur seberapa sering set target cgroup dipindai ulang (default 10 detik).
 	RediscoverInterval time.Duration
+	// RingWriteInterval adalah jarak minimum antar titik ring PSI per kunci cgroup yang ditulis daemon
+	// (default 500 ms); nilai negatif menonaktifkan throttle.
+	RingWriteInterval time.Duration
+	// Monotonic opsional menggantikan time.Now (yang membawa bacaan monotonik) untuk mengukur latensi refleks.
+	Monotonic func() time.Time
+	// IDSource opsional menyediakan byte ID evidence daemon (simulasi deterministik); nil memakai crypto/rand.
+	IDSource io.Reader
 }
 
 // Daemon mengorkestrasi seluruh pipeline Sentinel: startup probe, kolektor telemetri,
@@ -73,6 +83,23 @@ type Daemon struct {
 	targetsMu    sync.Mutex
 	targetOrder  []string
 	targetCancel map[string]context.CancelFunc
+	// ringLast menyimpan waktu titik ring terakhir per kunci cgroup untuk throttle RingWriteInterval
+	ringMu   sync.Mutex
+	ringLast map[string]time.Time
+	idMu     sync.Mutex
+}
+
+// Jenis pemicu refleks L1 yang dicatat pada event reflex.applied dan audit REFLEX_LATENCY.
+const (
+	reflexTriggerPSI          = "psi"
+	reflexTriggerMemoryEvents = "memory_events"
+	reflexTriggerSample       = "sample"
+)
+
+// reflexTrigger menyimpan jenis sinyal yang memulai evaluasi beserta instan monotoniknya.
+type reflexTrigger struct {
+	kind string
+	at   time.Time
 }
 
 // targetWatchSinks menyatukan WaitGroup milik Run dan channel fast-path yang dipakai watcher per target.
@@ -114,6 +141,13 @@ func New(cfg Config) (*Daemon, error) {
 	if cfg.RediscoverInterval <= 0 {
 		cfg.RediscoverInterval = defaultRediscoverInterval
 	}
+	if cfg.RingWriteInterval == 0 {
+		cfg.RingWriteInterval = defaultRingWriteInterval
+	}
+	if cfg.Monotonic == nil {
+		// time.Now membawa bacaan jam monotonik sehingga Sub() kebal terhadap lompatan jam dinding
+		cfg.Monotonic = time.Now
+	}
 	if cfg.Clock == nil {
 		cfg.Clock = func() time.Time { return time.Now().UTC() }
 	}
@@ -153,6 +187,7 @@ func New(cfg Config) (*Daemon, error) {
 		openByCgroup:  make(map[string]string),
 		lastSeverity:  make(map[string]detector.Severity),
 		targetCancel:  make(map[string]context.CancelFunc),
+		ringLast:      make(map[string]time.Time),
 	}, nil
 }
 
@@ -284,7 +319,57 @@ func (d *Daemon) Run(ctx context.Context) error {
 }
 
 // EvaluateOnce mengambil sampel satu cgroup lalu mengevaluasi TTO, state machine SQLite, dan refleks L1.
+// Instan pemicu "sample" diambil tepat saat pembacaan sampel dimulai.
 func (d *Daemon) EvaluateOnce(ctx context.Context, cgPath string) (detector.Evaluation, error) {
+	return d.evaluate(ctx, cgPath, d.newTrigger(reflexTriggerSample))
+}
+
+// newTrigger mencatat instan monotonik saat sinyal diterima atau sampel mulai dibaca.
+func (d *Daemon) newTrigger(kind string) reflexTrigger {
+	return reflexTrigger{kind: kind, at: d.cfg.Monotonic()}
+}
+
+// reflexLatencyMS menghitung latensi pemicu -> refleks dalam milidetik (presisi mikrodetik) dari jam monotonik,
+// bukan dari jam injeksi cfg.Clock.
+func (d *Daemon) reflexLatencyMS(trig reflexTrigger) float64 {
+	elapsed := d.cfg.Monotonic().Sub(trig.at)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	return float64(elapsed.Microseconds()) / 1000.0
+}
+
+// recordRing menulis titik ring PSI milik daemon dengan throttle per kunci cgroup (RingWriteInterval).
+// Keputusan memakai jam daemon agar konsisten untuk jalur cepat maupun sampling 1 Hz.
+func (d *Daemon) recordRing(key string, pt mcpserver.PSIPoint) {
+	if d.cfg.RingWriteInterval > 0 {
+		norm := ringThrottleKey(key)
+		now := d.cfg.Clock().UTC()
+		d.ringMu.Lock()
+		if last, ok := d.ringLast[norm]; ok {
+			// Jam yang mundur (mis. koreksi NTP) tidak boleh membungkam ring selama selisihnya
+			if elapsed := now.Sub(last); elapsed >= 0 && elapsed < d.cfg.RingWriteInterval {
+				d.ringMu.Unlock()
+				return
+			}
+		}
+		d.ringLast[norm] = now
+		d.ringMu.Unlock()
+	}
+	d.cfg.MCPServer.PSIRing().Record(key, pt)
+}
+
+// ringThrottleKey menormalkan kunci ring seperti PSIRingBuffer ("host" atau path cgroup bersih).
+func ringThrottleKey(key string) string {
+	trimmed := strings.TrimSpace(strings.ReplaceAll(key, "\\", "/"))
+	if trimmed == "" || trimmed == "/" || strings.EqualFold(trimmed, "host") {
+		return "host"
+	}
+	return path.Clean("/" + strings.TrimPrefix(trimmed, "/"))
+}
+
+// evaluate adalah varian internal EvaluateOnce yang membawa pemicu refleks ke jalur reflex.
+func (d *Daemon) evaluate(ctx context.Context, cgPath string, trig reflexTrigger) (detector.Evaluation, error) {
 	sample, err := d.sampler.SampleCgroup(cgPath)
 	if err != nil {
 		return detector.Evaluation{}, err
@@ -295,8 +380,10 @@ func (d *Daemon) EvaluateOnce(ctx context.Context, cgPath string) (detector.Eval
 	if now.IsZero() && !sample.At.IsZero() {
 		now = sample.At.UTC()
 	}
+	// Seragamkan stempel sampel dengan jam daemon agar evidence, ring, dan detektor memakai waktu yang sama
+	sample.At = now
 
-	d.cfg.MCPServer.PSIRing().Record(rel, mcpserver.PSIPoint{
+	d.recordRing(rel, mcpserver.PSIPoint{
 		At:            now,
 		SomeAvg10:     sample.PSISomeAvg10,
 		FullAvg10:     sample.PSIFullAvg10,
@@ -320,7 +407,7 @@ func (d *Daemon) EvaluateOnce(ctx context.Context, cgPath string) (detector.Eval
 	}
 
 	eval := d.cfg.Detector.Evaluate(detSample)
-	if err := d.reconcileEvaluation(ctx, cgPath, rel, sample, eval); err != nil {
+	if err := d.reconcileEvaluation(ctx, cgPath, rel, sample, eval, trig); err != nil {
 		return eval, err
 	}
 	return eval, nil
@@ -465,7 +552,7 @@ func (d *Daemon) sampleAllTargets(ctx context.Context, targets []string) {
 	now := d.cfg.Clock().UTC()
 	hostPressurePath := kernelfs.JoinPath(d.cfg.ProcRoot, "pressure/memory")
 	if m, err := psi.ReadMetrics(d.cfg.FS, hostPressurePath); err == nil {
-		d.cfg.MCPServer.PSIRing().Record("host", mcpserver.PSIPoint{
+		d.recordRing("host", mcpserver.PSIPoint{
 			At:         now,
 			SomeAvg10:  m.Some.Avg10,
 			SomeAvg60:  m.Some.Avg60,
@@ -495,23 +582,37 @@ func (d *Daemon) consumeFastSignals(ctx context.Context, psiCh <-chan psi.Pressu
 		case <-ctx.Done():
 			return
 		case pev := <-psiCh:
-			d.cfg.MCPServer.PSIRing().Record(pev.Cgroup, mcpserver.PSIPoint{
-				At:         pev.At,
-				SomeAvg10:  pev.Metrics.Some.Avg10,
-				SomeAvg60:  pev.Metrics.Some.Avg60,
-				SomeAvg300: pev.Metrics.Some.Avg300,
-				FullAvg10:  pev.Metrics.Full.Avg10,
-				FullAvg60:  pev.Metrics.Full.Avg60,
-				FullAvg300: pev.Metrics.Full.Avg300,
-			})
-			for _, cgPath := range d.matchTargetsForRel(d.snapshotTargets(), pev.Cgroup) {
-				_, _ = d.EvaluateOnce(ctx, cgPath)
-			}
+			d.handlePSIEvent(ctx, pev)
 		case dev := <-evCh:
-			for _, cgPath := range d.matchTargetsForRel(d.snapshotTargets(), dev.Cgroup) {
-				_, _ = d.EvaluateOnce(ctx, cgPath)
-			}
+			d.handleEventsDelta(ctx, dev)
 		}
+	}
+}
+
+// handlePSIEvent memproses satu wakeup trigger PSI: evaluasi target yang cocok lalu titik ring PSI.
+// Evaluasi berjalan lebih dulu agar titik lengkap (dengan memory.current) yang mengisi slot throttle cgroup;
+// titik PSI-only berikutnya pada kunci yang sama otomatis tersaring oleh throttle.
+func (d *Daemon) handlePSIEvent(ctx context.Context, pev psi.PressureEvent) {
+	trig := d.newTrigger(reflexTriggerPSI)
+	for _, cgPath := range d.matchTargetsForRel(d.snapshotTargets(), pev.Cgroup) {
+		_, _ = d.evaluate(ctx, cgPath, trig)
+	}
+	d.recordRing(pev.Cgroup, mcpserver.PSIPoint{
+		At:         pev.At,
+		SomeAvg10:  pev.Metrics.Some.Avg10,
+		SomeAvg60:  pev.Metrics.Some.Avg60,
+		SomeAvg300: pev.Metrics.Some.Avg300,
+		FullAvg10:  pev.Metrics.Full.Avg10,
+		FullAvg60:  pev.Metrics.Full.Avg60,
+		FullAvg300: pev.Metrics.Full.Avg300,
+	})
+}
+
+// handleEventsDelta memproses satu delta memory.events (inotify) dengan mengevaluasi target yang cocok.
+func (d *Daemon) handleEventsDelta(ctx context.Context, dev cgroup.EventsDelta) {
+	trig := d.newTrigger(reflexTriggerMemoryEvents)
+	for _, cgPath := range d.matchTargetsForRel(d.snapshotTargets(), dev.Cgroup) {
+		_, _ = d.evaluate(ctx, cgPath, trig)
 	}
 }
 
@@ -539,7 +640,7 @@ func (d *Daemon) consumeJournalEvents(ctx context.Context, ch <-chan journal.Jou
 			incidentID := d.findOpenIncidentForUnit(jev.Unit)
 			if incidentID != "" {
 				_ = d.cfg.Store.SaveEvidence(ctx, &incident.EvidenceSnapshot{
-					ID:           newSentinelID("EVD"),
+					ID:           d.newID("EVD"),
 					IncidentID:   incidentID,
 					Kind:         "journal_pattern",
 					RawData:      redacted,
@@ -551,7 +652,7 @@ func (d *Daemon) consumeJournalEvents(ctx context.Context, ch <-chan journal.Jou
 	}
 }
 
-func (d *Daemon) reconcileEvaluation(ctx context.Context, cgPath, rel string, sample cgroup.Sample, eval detector.Evaluation) error {
+func (d *Daemon) reconcileEvaluation(ctx context.Context, cgPath, rel string, sample cgroup.Sample, eval detector.Evaluation, trig reflexTrigger) error {
 	d.evalMu.Lock()
 	defer d.evalMu.Unlock()
 
@@ -598,7 +699,7 @@ func (d *Daemon) reconcileEvaluation(ctx context.Context, cgPath, rel string, sa
 			samplePayload, _ := json.Marshal(sample)
 			redactedSample := redact.String(string(samplePayload))
 			_ = d.cfg.Store.SaveEvidence(ctx, &incident.EvidenceSnapshot{
-				ID:           newSentinelID("EVD"),
+				ID:           d.newID("EVD"),
 				IncidentID:   incID,
 				Kind:         "telemetry_sample",
 				RawData:      redactedSample,
@@ -622,9 +723,16 @@ func (d *Daemon) reconcileEvaluation(ctx context.Context, cgPath, rel string, sa
 				},
 			})
 
-			return d.maybeApplyReflex(ctx, inc, cgPath, rel, eval, broker)
+			return d.maybeApplyReflex(ctx, inc, cgPath, rel, eval, broker, trig)
 		}
 		return getErr
+	}
+
+	// Insiden yang sudah final (mis. ESCALATED setelah verifikasi gagal) tidak boleh menerima refleks atau event
+	// eskalasi severity baru selama detektor masih menganggap episode tekanannya berlangsung; tekanan lanjutan
+	// ditangani sebagai insiden baru setelah detektor menutup episode ini atau me-reopen ID-nya.
+	if isTerminalState(inc.State) && !eval.Reopened {
+		return nil
 	}
 
 	// Jika detector me-reopen ID lama yang sudah terminal di SQLite, buat sufiks ID baru agar audit trail tetap valid
@@ -652,7 +760,7 @@ func (d *Daemon) reconcileEvaluation(ctx context.Context, cgPath, rel string, sa
 			State:      string(incident.StateDetected),
 			Summary:    fmt.Sprintf("%s reopened pressure on %s", eval.Severity, rel),
 		})
-		return d.maybeApplyReflex(ctx, newInc, cgPath, rel, eval, broker)
+		return d.maybeApplyReflex(ctx, newInc, cgPath, rel, eval, broker, trig)
 	}
 
 	d.openByCgroup[rel] = inc.ID
@@ -668,13 +776,13 @@ func (d *Daemon) reconcileEvaluation(ctx context.Context, cgPath, rel string, sa
 			State:      string(inc.State),
 			Summary:    fmt.Sprintf("Severity increased from %s to %s on %s", prevSev, eval.Severity, rel),
 		})
-		return d.maybeApplyReflex(ctx, inc, cgPath, rel, eval, broker)
+		return d.maybeApplyReflex(ctx, inc, cgPath, rel, eval, broker, trig)
 	}
 
 	return nil
 }
 
-func (d *Daemon) maybeApplyReflex(ctx context.Context, inc *incident.Incident, cgPath, rel string, eval detector.Evaluation, broker *mcpserver.EventBroker) error {
+func (d *Daemon) maybeApplyReflex(ctx context.Context, inc *incident.Incident, cgPath, rel string, eval detector.Evaluation, broker *mcpserver.EventBroker, trig reflexTrigger) error {
 	if d.cfg.Catalog.IsProtectedUnit(rel) || d.cfg.Catalog.IsProtectedUnit(path.Base(rel)) || !d.isEligibleReflexTarget(cgPath, rel) {
 		return nil
 	}
@@ -692,6 +800,8 @@ func (d *Daemon) maybeApplyReflex(ctx context.Context, inc *incident.Incident, c
 		TTLSeconds: reflex.DefaultTTLSeconds,
 	}); err == nil {
 		applied = true
+		latencyMS := d.reflexLatencyMS(trig)
+		d.recordReflexLatency(ctx, inc.ID, act, latencyMS, trig)
 		broker.Publish(mcpserver.StreamEvent{
 			Type:       "reflex.applied",
 			IncidentID: inc.ID,
@@ -703,6 +813,8 @@ func (d *Daemon) maybeApplyReflex(ctx context.Context, inc *incident.Incident, c
 				"action":      act.Action,
 				"target":      act.Target,
 				"ttl_seconds": act.TTLSeconds,
+				"latency_ms":  latencyMS,
+				"trigger":     trig.kind,
 			},
 		})
 	}
@@ -717,6 +829,8 @@ func (d *Daemon) maybeApplyReflex(ctx context.Context, inc *incident.Incident, c
 				TTLSeconds: reflex.DefaultTTLSeconds,
 			}); err == nil {
 				applied = true
+				latencyMS := d.reflexLatencyMS(trig)
+				d.recordReflexLatency(ctx, inc.ID, act, latencyMS, trig)
 				broker.Publish(mcpserver.StreamEvent{
 					Type:       "reflex.applied",
 					IncidentID: inc.ID,
@@ -728,6 +842,8 @@ func (d *Daemon) maybeApplyReflex(ctx context.Context, inc *incident.Incident, c
 						"action":      act.Action,
 						"target":      act.Target,
 						"ttl_seconds": act.TTLSeconds,
+						"latency_ms":  latencyMS,
+						"trigger":     trig.kind,
 					},
 				})
 			}
@@ -747,6 +863,20 @@ func (d *Daemon) maybeApplyReflex(ctx context.Context, inc *incident.Incident, c
 	}
 
 	return nil
+}
+
+// recordReflexLatency mencatat audit REFLEX_LATENCY {reflex_id, action, latency_ms, trigger} untuk refleks daemon.
+func (d *Daemon) recordReflexLatency(ctx context.Context, incidentID string, act *incident.ReflexAction, latencyMS float64, trig reflexTrigger) {
+	payload, err := json.Marshal(struct {
+		ReflexID  string  `json:"reflex_id"`
+		Action    string  `json:"action"`
+		LatencyMS float64 `json:"latency_ms"`
+		Trigger   string  `json:"trigger"`
+	}{ReflexID: act.ID, Action: act.Action, LatencyMS: latencyMS, Trigger: trig.kind})
+	if err != nil {
+		return
+	}
+	_ = d.cfg.Store.RecordAudit(ctx, incidentID, "sentinel", "REFLEX_LATENCY", string(payload))
 }
 
 func (d *Daemon) closeIncidentOnRecovery(ctx context.Context, rel string, eval detector.Evaluation, broker *mcpserver.EventBroker) error {
@@ -781,6 +911,8 @@ func (d *Daemon) closeIncidentOnRecovery(ctx context.Context, rel string, eval d
 		if tErr := d.cfg.Store.TransitionState(ctx, incID, incident.StateResolved, "sentinel", "auto-resolved after 120s sustained recovery"); tErr != nil {
 			return tErr
 		}
+		// Simpan seri PSI/memori insiden sekali saat ditutup oleh hysteresis pemulihan
+		_, _ = d.cfg.MCPServer.SnapshotTelemetrySeries(ctx, incID)
 		broker.Publish(mcpserver.StreamEvent{
 			Type:       "incident.updated",
 			IncidentID: incID,
@@ -980,8 +1112,19 @@ func isTerminalState(st incident.State) bool {
 		st == incident.StateExpired
 }
 
-func newSentinelID(prefix string) string {
+// newID membuat ID evidence daemon dari cfg.IDSource bila dikonfigurasi (simulasi deterministik), selain itu crypto/rand.
+func (d *Daemon) newID(prefix string) string {
 	var b [6]byte
-	_, _ = rand.Read(b[:])
+	d.idMu.Lock()
+	src := d.cfg.IDSource
+	ok := src != nil
+	if ok {
+		_, err := io.ReadFull(src, b[:])
+		ok = err == nil
+	}
+	d.idMu.Unlock()
+	if !ok {
+		_, _ = rand.Read(b[:])
+	}
 	return fmt.Sprintf("%s-%s", prefix, hex.EncodeToString(b[:]))
 }

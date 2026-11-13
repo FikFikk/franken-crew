@@ -4,9 +4,10 @@
 
 > **Status (Sentinel Core + Headless WhatsApp Bridge + Kiro Crew + Chaos Verification Complete)**
 >
-> - **Implemented & Tested (Go 1.26+, pure-Go static binary `CGO_ENABLED=0`):** Kernel telemetry (`kernelfs`, `psi`, `cgroup`, `journal`), EWMA Time-To-OOM `detector`, SQLite WAL `incident` store & `redact` pipeline, single-source `policy` & fixed-argv `executor`, L1 TTL `reflex` engine, Ed25519 `approval` protocol, Streamable HTTP/SSE & stdio `mcpserver` (including 120s PSI+RAM stability `verify_health` and `postmortem_generate`), unified `sentinel` daemon, headless `whatsmeow` bridge (`internal/wabridge` + `cmd/wa-bridge`), redacted markdown `postmortem` generator, systemd sandbox units (`deploy/systemd/`), 20-cycle `chaos` suite (`internal/chaos` + `chaos/`), and the `franken` CLI (`keys init`, `sentinel serve`, `mcp serve|stdio|connect`, `wa-login`, `postmortem`, `chaos run`, `guard`).
+> - **Implemented & Tested (Go 1.26.11+, pure-Go static binary `CGO_ENABLED=0`, `govulncheck` clean):** Kernel telemetry (`kernelfs`, `psi`, `cgroup`, `journal`), EWMA Time-To-OOM `detector`, SQLite WAL `incident` store & `redact` pipeline, single-source `policy` & fixed-argv `executor`, L1 TTL `reflex` engine, Ed25519 `approval` protocol, Streamable HTTP/SSE & stdio `mcpserver` (including 120s PSI+RAM stability `verify_health` and `postmortem_generate`), unified `sentinel` daemon, headless `whatsmeow` bridge (`internal/wabridge` + `cmd/wa-bridge`), redacted markdown `postmortem` generator, systemd sandbox units (`deploy/systemd/`), 20-cycle `chaos` suite (`internal/chaos` + `chaos/`), and the `franken` CLI (`keys init`, `sentinel serve`, `mcp serve|stdio|connect`, `wa-login`, `postmortem`, `chaos run`, `guard`, `lab simulate|export|serve`).
 > - **Implemented Kiro Customization Stack (`.kiro/` + `app.json`):** Spec-driven development specs, multi-mode steering documents, 5 `v1` hooks (including `.kiro/hooks/preToolUse.json` running `franken guard --audit` in the IDE/CLI), a `franken-conductor` orchestrator plus 3 MCP-only specialist agents (`franken-sentry`, `franken-architect`, `franken-remediator`), 3 skills (`linux-memory-forensics`, `remediation-runbooks`, `incident-spec-writer`), `.kiro/settings/mcp.json`, and a Kiro Crew app manifest (`app.json`) with a 15-minute safety-net sweep and a morning digest.
-> - **Planned Next Milestones:** Read-only **Haunted Lab** observability web dashboard and a Crew dashboard page.
+> - **Implemented Graveyard Dashboard (`ui/` + `internal/lab`):** Read-only incident replay landing page and Kiro Crew dashboard page (`app.json` `ui.pages`), served by `franken lab serve` on port 3008 and published at <https://frankencrew.fikfikk.my.id>. See [Incident Replay Dashboard](#incident-replay-dashboard).
+> - **Planned Next Milestones:** Measurements on a live ARM64 board (RSS, kernel-to-reflex latency) and recorded replays exported with `franken lab export`.
 
 ## Event-Driven Kiro Crew Flow
 
@@ -36,10 +37,10 @@ Sentinel rejects any plan or execution whose target is outside the incident cgro
 ## Repository Layout
 
 ```text
-cmd/franken/                  # Unified CLI (`keys init`, `sentinel serve`, `mcp serve|stdio|connect`, `wa-login`, `postmortem`, `chaos run`, `guard`)
+cmd/franken/                  # Unified CLI (`keys init`, `sentinel serve`, `mcp serve|stdio|connect`, `wa-login`, `postmortem`, `chaos run`, `guard`, `lab`)
 cmd/wa-bridge/                # Headless WhatsApp bridge daemon & MCP stdio binary (`serve`, `login`, `mcp`)
 chaos/                        # Linux chaos workload injector & 20-cycle test harness (`haunted_workload.sh`, `run_chaos_suite.sh`)
-deploy/systemd/               # Hardened systemd units (`franken-sentinel.service`, `franken-bridge.service`, `franken.env.example`)
+deploy/systemd/               # Hardened systemd units (`franken-sentinel.service`, `franken-bridge.service`, `franken-lab.service`, `franken.env.example`)
 internal/
   kernelfs/                   # Kernel capability probe (cgroup v2, PSI, /proc/meminfo) + MemFS test double
   psi/                        # PSI POLLPRI epoll trigger watcher with 1 Hz fallback polling
@@ -57,6 +58,8 @@ internal/
   chaos/                      # 20-run end-to-end chaos suite & Sentinel evaluation benchmark
   sentinel/                   # Unified Sentinel daemon orchestrating collectors, reflexes, SQLite & MCP/SSE
   wabridge/                   # Two-way whatsmeow SSE/poll bridge, LID allowlist, Ed25519 signer & 15s heartbeat watcher
+  lab/                        # Graveyard replay export, in-process simulation & read-only dashboard server (`franken lab`)
+ui/                           # Graveyard landing page, no-build ES modules (`dist/`, Kiro Crew `ui.entry`) & `data/replay.json`
 policy/                       # `actions.yaml` catalog & `plan.schema.json`
 .kiro/
   steering/                   # `rules.md`, `product.md`, `tech.md`, `structure.md`, `linux-kernel.md`, `incident-response.md`
@@ -107,18 +110,55 @@ go run ./cmd/franken chaos run --runs 20
 go run ./cmd/franken postmortem --db franken-sentinel.db --incident INC-20261113-1200-node01 --out incidents
 ```
 
+## Incident Replay Dashboard
+
+The **Graveyard** (`ui/`) replays finished incidents: memory and PSI telemetry, swimlanes for kernel, Sentinel, Crew, human, and verification events, the operator chat with the approval poll, the L1 reflex latency against the 250 ms budget, and the postmortem. It is plain ES modules and SVG with no framework and no build step. The same files serve the public landing page and the Kiro Crew dashboard page that `app.json` registers (`ui.entry: dist/index.mjs`, route `/apps/franken-crew`).
+
+```bash
+# Rebuild ui/data/replay.json through the real engine (in-memory cgroup, fake systemd and PM2; labelled "Simulation")
+go run ./cmd/franken lab simulate --out ui/data/replay.json
+
+# Export closed incidents from a Sentinel database instead (labelled "Recording")
+go run ./cmd/franken lab export --db franken-sentinel.db --out /var/lib/franken/replays/replay.json --source-kind recording
+
+# Serve the dashboard read-only (GET/HEAD only, strict CSP); --sentinel adds the live status badge
+go run ./cmd/franken lab serve --listen 127.0.0.1:3008 --data-dir /var/lib/franken/replays \
+  --sentinel http://100.64.0.10:8090 --token-env FRANKEN_BEARER_TOKEN
+```
+
+`deploy/systemd/franken-lab.service` runs the server with `DynamicUser=yes` and `MemoryMax=32M`. To publish it (for example at <https://frankencrew.fikfikk.my.id>), put a TLS proxy in front of `127.0.0.1:3008`, such as Caddy:
+
+```caddyfile
+frankencrew.fikfikk.my.id {
+	reverse_proxy 127.0.0.1:3008
+}
+```
+
+or a Cloudflare Tunnel ingress rule:
+
+```yaml
+ingress:
+  - hostname: frankencrew.fikfikk.my.id
+    service: http://127.0.0.1:3008
+  - service: http_status:404
+```
+
+Without `--sentinel`, `/api/status` returns `{"mode":"replay"}` and the badge shows replay mode. With it, the badge shows the node, PSI, and open incidents, and the lab process holds the Sentinel bearer token, so run it only on a host you already trust with that token.
+
 ## Footprint & Chaos Benchmarks
 
-- **Static `linux/arm64` Binary Sizes (`CGO_ENABLED=0`):** `franken` = `29,932,279 B` (~28.5 MiB), `wa-bridge` = `27,988,246 B` (~26.7 MiB).
+- **Static `linux/arm64` Binary Sizes (`CGO_ENABLED=0`):** `franken` = `31,045,125 B` (~29.6 MiB, including the embedded Graveyard dashboard), `wa-bridge` = `28,822,917 B` (~27.5 MiB), built with Go 1.26.11.
 - **Sentinel Evaluation Benchmark (`BenchmarkSentinelEvalAndReflexFootprint`):** `35,421 ns/op` (~0.035 ms/cycle), `50,229 B/op`, `40 allocs/op` (measured on Intel Core i7-10750H dev host; live ARM64 board RSS target ≤ 32 MiB to be measured on hardware deploy).
-- **Chaos Simulation (`franken chaos run --runs 20`):** `20/20 passed`, `0 failed`, `max_reflex_ms = 14.27 ms` (`avg = 3.44 ms`) across `memory_leak`, `memory_spike`, `fork_storm`, `zombie_storm`, and `log_flood`. This suite runs against an in-memory cgroup/procfs fixture with a fake command runner, so the timings measure Go evaluation and SQLite work, not kernel-to-reflex latency on hardware.
+- **Chaos Simulation (`franken chaos run --runs 20`):** `20/20 passed`, `0 failed`, `max_reflex_ms = 1.50 ms` (`avg = 1.11 ms`, re-measured 2026-11-13 in an x86-64 Linux sandbox) across `memory_leak`, `memory_spike`, `fork_storm`, `zombie_storm`, and `log_flood`. This suite runs against an in-memory cgroup/procfs fixture with a fake command runner, so the timings measure Go evaluation and SQLite work, not kernel-to-reflex latency on hardware.
 - **systemd Sandboxing ([deploy/systemd/](deploy/systemd/)):** Both `franken-sentinel.service` and `franken-bridge.service` enforce `OOMScoreAdjust=-900`, `MemoryMax=48M`, `ProtectSystem=strict`, `NoNewPrivileges=yes`, `ProtectHome=yes`, `PrivateTmp=yes`, and strict `ReadWritePaths`.
 
 ## Documentation
 
 - [docs/BLUEPRINT.md](docs/BLUEPRINT.md) — End-to-end architecture, threat model, and demo specification
 - [documentation.md](documentation.md) — Entity lifecycles, state transitions, and business constraints (Bahasa Indonesia)
-- [documentation-api.md](documentation-api.md) — Sentinel HTTP, SSE, MCP tool, and CLI contracts (Bahasa Indonesia)
+- [documentation-api.md](documentation-api.md) — Sentinel HTTP, SSE, MCP tool, CLI, and Graveyard dashboard contracts (Bahasa Indonesia)
+- [docs/DEVPOST_SUBMISSION.md](docs/DEVPOST_SUBMISSION.md) — Kiroween 2026 Devpost answers, including how Kiro was used
+- [docs/BLOG_POST.md](docs/BLOG_POST.md) — Draft dev.to article for the Kiroween 2026 blog prize
 
 ## License
 

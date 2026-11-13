@@ -632,4 +632,3 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  login    Pair WhatsApp session via terminal QR code using modernc SQLite store")
 	fmt.Fprintln(w, "  mcp      Forward MCP stdio JSON-RPC to the running `wa-bridge serve` process")
 }
-

@@ -39,6 +39,8 @@ func runWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return runPostmortem(args[1:], stdout, stderr)
 	case "chaos":
 		return runChaos(args[1:], stdout, stderr)
+	case "lab":
+		return runLab(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
 		printRootUsage(stdout)
 		return 0
@@ -107,6 +109,7 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "  wa-login    Pair headless WhatsApp session via terminal QR code (modernc SQLite)")
 	fmt.Fprintln(w, "  postmortem  Generate redacted markdown incident postmortem from Sentinel SQLite DB")
 	fmt.Fprintln(w, "  chaos       Run deterministic 20-cycle chaos injection & recovery verification suite")
+	fmt.Fprintln(w, "  lab         Serve, export, or simulate Graveyard incident replays (public read-only dashboard)")
 	fmt.Fprintln(w, "  guard       PreToolUse policy & protected-target validator for Kiro hooks")
 }
 
@@ -116,4 +119,3 @@ func printKeysUsage(w io.Writer) {
 	fmt.Fprintln(w, "Subcommands:")
 	fmt.Fprintln(w, "  init    Generate Ed25519 keypair (0600 private key for wa-bridge, 0644 public key for sentinel)")
 }
-

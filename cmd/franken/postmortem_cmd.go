@@ -60,4 +60,3 @@ func runPostmortem(args []string, stdout, stderr io.Writer) int {
 		doc.IncidentID, doc.FilePath, doc.State, doc.EvidenceUsed, doc.AuditEntries)
 	return 0
 }
-

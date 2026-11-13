@@ -20,12 +20,12 @@ import (
 
 // spyPropertyDriver merekam setiap perubahan properti unit untuk memverifikasi rollback dan ketepatan nilai.
 type spyPropertyDriver struct {
-	mu           sync.Mutex
-	current      map[string]UnitProperties
-	setCalls     []UnitProperties
-	setCount     map[string]int
-	revertCount  atomic.Int32
-	failNextSet  bool
+	mu            sync.Mutex
+	current       map[string]UnitProperties
+	setCalls      []UnitProperties
+	setCount      map[string]int
+	revertCount   atomic.Int32
+	failNextSet   bool
 	failRemaining int
 }
 
@@ -255,9 +255,9 @@ func TestReflex_SafetyGuardrails(t *testing.T) {
 
 	// Tolak MemoryHigh di atas 95% host RAM (1.95 GiB > 1.90 GiB)
 	if _, err := eng.ApplyThrottle(ctx, ThrottleRequest{
-		IncidentID:      incID,
-		Unit:            "haunted-api.service",
-		CgroupPath:      cgPath,
+		IncidentID: incID,
+		Unit:       "haunted-api.service",
+		CgroupPath: cgPath,
 		// 2000 MiB > 1945.6 MiB (95% dari 2 GiB)
 		MemoryHighBytes: 2000 * 1024 * 1024,
 	}); !errors.Is(err, ErrMemoryHighAboveHostCap) {

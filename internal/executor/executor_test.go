@@ -132,7 +132,7 @@ func TestExecutorHelperProcess(t *testing.T) {
 
 func TestExecutor_WaitDelayAndCancelPreventsPipeHang(t *testing.T) {
 	selfBase := strings.ToLower(filepath.Base(os.Args[0]))
-	execSafe := NewExecutor(2*time.Second).WithWaitDelay(120 * time.Millisecond)
+	execSafe := NewExecutor(2 * time.Second).WithWaitDelay(120 * time.Millisecond)
 	execSafe.allowed = map[string]bool{selfBase: true}
 
 	t.Run("orphan_holds_pipes_after_parent_exit", func(t *testing.T) {
@@ -192,4 +192,3 @@ func TestExecutor_WaitDelayAndCancelPreventsPipeHang(t *testing.T) {
 		}
 	})
 }
-

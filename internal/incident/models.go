@@ -22,6 +22,18 @@ const (
 	StateExpired         State = "EXPIRED"
 )
 
+// EvidenceKindTelemetrySeries adalah jenis evidence berisi seri telemetri insiden (PSI dan memory.current).
+const EvidenceKindTelemetrySeries = "telemetry_series"
+
+// TelemetrySeries adalah payload JSON evidence telemetry_series. Evidence melewati redact.String, dan pola
+// telepon/IP di sana dapat merusak angka panjang atau bertitik, sehingga setiap angka disimpan sebagai integer:
+// Points berisi [t_ms relatif opened_at, memory_kib, psi_some_x100, psi_full_x100] terurut menaik.
+type TelemetrySeries struct {
+	Cgroup     string     `json:"cgroup"`
+	LimitBytes uint64     `json:"limit_bytes"`
+	Points     [][4]int64 `json:"points"`
+}
+
 var (
 	// ErrInvalidTransition terjadi ketika transisi status tidak diperbolehkan oleh state machine
 	ErrInvalidTransition = errors.New("incident: invalid state transition")
@@ -33,17 +45,17 @@ var (
 
 // Incident merepresentasikan entitas insiden utama di database.
 type Incident struct {
-	ID          string     `json:"id"`
-	Node        string     `json:"node"`
-	Cgroup      string     `json:"cgroup"`
-	Severity    string     `json:"severity"`
-	State       State      `json:"state"`
-	TTOSeconds  *float64   `json:"tto_seconds,omitempty"`
-	OpenedAt    time.Time  `json:"opened_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	ClosedAt    *time.Time `json:"closed_at,omitempty"`
-	TriageJSON  string     `json:"triage_json,omitempty"`
-	PlanJSON    string     `json:"plan_json,omitempty"`
+	ID         string     `json:"id"`
+	Node       string     `json:"node"`
+	Cgroup     string     `json:"cgroup"`
+	Severity   string     `json:"severity"`
+	State      State      `json:"state"`
+	TTOSeconds *float64   `json:"tto_seconds,omitempty"`
+	OpenedAt   time.Time  `json:"opened_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	ClosedAt   *time.Time `json:"closed_at,omitempty"`
+	TriageJSON string     `json:"triage_json,omitempty"`
+	PlanJSON   string     `json:"plan_json,omitempty"`
 }
 
 // EvidenceSnapshot merepresentasikan rekaman bukti telemetri yang telah disensor.
@@ -143,4 +155,3 @@ func CanTransition(from, to State) bool {
 	}
 	return false
 }
-

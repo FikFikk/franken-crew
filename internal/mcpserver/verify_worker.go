@@ -345,6 +345,9 @@ func (s *Server) finalizeForwardVerification(ctx context.Context, st *verifyStat
 		eventData["failure_reasons"] = truncateReasons(failures, 3, 300)
 	}
 
+	// Simpan seri PSI/memori sekali saat insiden final, sebelum postmortem agar dokumen ikut memuatnya
+	s.snapshotSeriesIfTerminal(ctx, spec.incidentID, finalState)
+
 	// Tutup loop secara deterministik tanpa menunggu agen LLM: tulis postmortem saat insiden sudah final,
 	// lalu umumkan path-nya lewat verification.completed agar wa-bridge bisa mengirim laporan akhir
 	if s.cfg.AutoPostmortem && isTerminalState(finalState) {

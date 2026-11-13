@@ -44,4 +44,3 @@ func runWALogin(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "WhatsApp session paired cleanly as %s (store=%s)\n", jid.String(), *dbPath)
 	return 0
 }
-

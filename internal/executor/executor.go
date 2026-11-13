@@ -190,4 +190,3 @@ func (e *Executor) isAllowed(baseBinary string) bool {
 	}
 	return AllowlistedBinaries[baseBinary]
 }
-

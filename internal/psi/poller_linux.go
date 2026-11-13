@@ -73,4 +73,3 @@ func (p *linuxTriggerPoller) Watch(ctx context.Context, pressurePath string, spe
 		}
 	}
 }
-

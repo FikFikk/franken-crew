@@ -1,6 +1,8 @@
 # Binaries & Build Artifacts
 bin/
 dist/
+!ui/dist/
+!ui/dist/**
 out/
 build/
 *.exe

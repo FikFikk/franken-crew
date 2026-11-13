@@ -99,10 +99,14 @@ func (l *writerLogger) logf(level int, tag, msg string, args ...any) {
 	l.mu.Unlock()
 }
 
-func (l *writerLogger) Warnf(msg string, args ...any)  { l.logf(waLogLevelWarn, "WARN", msg, args...) }
-func (l *writerLogger) Errorf(msg string, args ...any) { l.logf(waLogLevelError, "ERROR", msg, args...) }
-func (l *writerLogger) Infof(msg string, args ...any)  { l.logf(waLogLevelInfo, "INFO", msg, args...) }
-func (l *writerLogger) Debugf(msg string, args ...any) { l.logf(waLogLevelDebug, "DEBUG", msg, args...) }
+func (l *writerLogger) Warnf(msg string, args ...any) { l.logf(waLogLevelWarn, "WARN", msg, args...) }
+func (l *writerLogger) Errorf(msg string, args ...any) {
+	l.logf(waLogLevelError, "ERROR", msg, args...)
+}
+func (l *writerLogger) Infof(msg string, args ...any) { l.logf(waLogLevelInfo, "INFO", msg, args...) }
+func (l *writerLogger) Debugf(msg string, args ...any) {
+	l.logf(waLogLevelDebug, "DEBUG", msg, args...)
+}
 
 func (l *writerLogger) Sub(module string) waLog.Logger {
 	subName := module
@@ -299,4 +303,3 @@ func (m *WhatsmeowMessenger) ResolveLID(ctx context.Context, lid types.JID) type
 	}
 	return pn.ToNonAD()
 }
-

@@ -12,8 +12,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/FikFikk/franken-crew/internal/incident"
@@ -86,6 +88,19 @@ type VerifyContext struct {
 type Minter struct {
 	privKey ed25519.PrivateKey
 	clock   func() time.Time
+
+	// nonceMu melindungi nonceSrc opsional (simulasi deterministik); nil berarti crypto/rand
+	nonceMu  sync.Mutex
+	nonceSrc io.Reader
+}
+
+// SetNonceSource mengganti sumber byte nonce token (default crypto/rand) untuk simulasi atau test yang harus
+// reproduktif. Nonce tetap hanya penanda sekali-pakai di dalam payload yang ditandatangani; bila sumber habis
+// atau gagal dibaca, minter kembali ke crypto/rand.
+func (m *Minter) SetNonceSource(r io.Reader) {
+	m.nonceMu.Lock()
+	defer m.nonceMu.Unlock()
+	m.nonceSrc = r
 }
 
 // NewMinter membuat token minter Ed25519 baru dengan jam bawaan UTC.
@@ -140,7 +155,7 @@ func (m *Minter) Mint(req MintRequest) (string, *Claims, error) {
 		return "", nil, fmt.Errorf("%w: ttl must be between 1s and %s", ErrInvalidClaims, MaxTokenTTL)
 	}
 
-	nonce, err := generateNonce()
+	nonce, err := m.nextNonce()
 	if err != nil {
 		return "", nil, err
 	}
@@ -307,6 +322,23 @@ func validateContextBindings(claims *Claims, expected VerifyContext) error {
 	return nil
 }
 
+// nextNonce membaca nonce dari sumber injeksi bila ada, selain itu dari crypto/rand.
+func (m *Minter) nextNonce() (string, error) {
+	m.nonceMu.Lock()
+	src := m.nonceSrc
+	if src != nil {
+		var raw [nonceByteLen]byte
+		_, readErr := io.ReadFull(src, raw[:])
+		m.nonceMu.Unlock()
+		if readErr == nil {
+			return hex.EncodeToString(raw[:]), nil
+		}
+		return generateNonce()
+	}
+	m.nonceMu.Unlock()
+	return generateNonce()
+}
+
 func generateNonce() (string, error) {
 	var raw [nonceByteLen]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -314,4 +346,3 @@ func generateNonce() (string, error) {
 	}
 	return hex.EncodeToString(raw[:]), nil
 }
-

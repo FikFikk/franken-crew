@@ -200,10 +200,10 @@ func setupTestMCPHarness(t *testing.T) *testMCPHarness {
 	mfs.SetFile("/proc/1205/stat", "1205 (sh zombie) Z 1200 1200 1200 0 -1 4194560 0 0 0 0\n")
 
 	h := &testMCPHarness{
-		store:    store,
-		fs:       mfs,
-		runner:   nil,
-		now:      time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC),
+		store:  store,
+		fs:     mfs,
+		runner: nil,
+		now:    time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC),
 	}
 	clockFn := h.Now
 
@@ -617,29 +617,29 @@ func TestMCP_WriteToolsPolicyTokenAndVerification(t *testing.T) {
 
 	// 3. Tolak L3 meski membawa token, tolak L2 tanpa token, dan tolak parameter yang dimodifikasi pasca-approval
 	for _, tc := range []struct {
-		name   string
-		args   map[string]any
+		name    string
+		args    map[string]any
 		wantSub string
 	}{
 		{
-			name:   "l3_forbidden_even_with_token",
-			args:   map[string]any{"incident_id": "INC-20261113-0930-pi01", "step_id": "step-l2", "action": "raw_shell", "params": map[string]any{}, "approval_token": tokL2},
+			name:    "l3_forbidden_even_with_token",
+			args:    map[string]any{"incident_id": "INC-20261113-0930-pi01", "step_id": "step-l2", "action": "raw_shell", "params": map[string]any{}, "approval_token": tokL2},
 			wantSub: "forbidden",
 		},
 		{
-			name:   "l2_protected_unit_even_with_token",
-			args:   map[string]any{"incident_id": "INC-20261113-0930-pi01", "step_id": "step-l2", "action": "unit_restart", "params": map[string]any{"unit": "sshd.service"}, "approval_token": tokL2},
+			name:    "l2_protected_unit_even_with_token",
+			args:    map[string]any{"incident_id": "INC-20261113-0930-pi01", "step_id": "step-l2", "action": "unit_restart", "params": map[string]any{"unit": "sshd.service"}, "approval_token": tokL2},
 			wantSub: "protected",
 		},
 		{
-			name:   "l2_missing_token",
-			args:   map[string]any{"incident_id": "INC-20261113-0930-pi01", "step_id": "step-l2", "action": "unit_restart", "params": map[string]any{"unit": "haunted-api.service"}},
+			name:    "l2_missing_token",
+			args:    map[string]any{"incident_id": "INC-20261113-0930-pi01", "step_id": "step-l2", "action": "unit_restart", "params": map[string]any{"unit": "haunted-api.service"}},
 			wantSub: "approval_token is required",
 		},
 		{
 			// Unit yang sama ditulis tanpa sufiks: tetap dalam cgroup insiden, tetapi parameter kanonik berbeda dari plan
-			name:   "l2_mutated_params",
-			args:   map[string]any{"incident_id": "INC-20261113-0930-pi01", "step_id": "step-l2", "action": "unit_restart", "params": map[string]any{"unit": "haunted-api"}, "approval_token": tokL2},
+			name:    "l2_mutated_params",
+			args:    map[string]any{"incident_id": "INC-20261113-0930-pi01", "step_id": "step-l2", "action": "unit_restart", "params": map[string]any{"unit": "haunted-api"}, "approval_token": tokL2},
 			wantSub: "differ from approved plan",
 		},
 		{

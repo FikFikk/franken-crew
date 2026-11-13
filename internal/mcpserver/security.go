@@ -166,4 +166,3 @@ func writeUnauthorized(w http.ResponseWriter, msg string) {
 	w.WriteHeader(http.StatusUnauthorized)
 	_, _ = fmt.Fprintf(w, `{"error":%q}`, msg)
 }
-

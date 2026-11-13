@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -85,10 +86,10 @@ type RedactedEvidenceView struct {
 type IncidentGetOutput struct {
 	Incident incident.Incident `json:"incident"`
 	// PlanHash adalah hash SHA-256 kanonik dari plan tersimpan (dihitung sebelum redaksi) untuk wa_request_approval
-	PlanHash   string                 `json:"plan_hash,omitempty"`
-	Evidence   []RedactedEvidenceView `json:"evidence"`
+	PlanHash   string                  `json:"plan_hash,omitempty"`
+	Evidence   []RedactedEvidenceView  `json:"evidence"`
 	Reflexes   []incident.ReflexAction `json:"reflexes"`
-	AuditTrail []incident.AuditEntry  `json:"audit_trail"`
+	AuditTrail []incident.AuditEntry   `json:"audit_trail"`
 }
 
 // IncidentClaimInput memuat parameter untuk klaim atomik insiden.
@@ -491,7 +492,7 @@ func (s *Server) handleJournalTail(ctx context.Context, _ *mcp.CallToolRequest, 
 
 	// Jika terhubung ke insiden aktif, simpan snapshot bukti tersensor ke SQLite
 	if incID := strings.TrimSpace(in.IncidentID); incID != "" {
-		evID = newEvidenceID()
+		evID = s.newEvidenceID()
 		if _, gErr := s.cfg.Store.GetIncident(ctx, incID); gErr != nil {
 			return nil, JournalTailOutput{}, fmt.Errorf("lookup incident %s for evidence snapshot: %w", incID, gErr)
 		}
@@ -539,9 +540,19 @@ func (s *Server) handleZombieReport(_ context.Context, _ *mcp.CallToolRequest, _
 	return nil, report, nil
 }
 
-func newEvidenceID() string {
+// newEvidenceID membuat ID evidence dari cfg.IDSource bila dikonfigurasi (simulasi deterministik), selain itu crypto/rand.
+func (s *Server) newEvidenceID() string {
 	var b [6]byte
-	_, _ = rand.Read(b[:])
+	s.idMu.Lock()
+	src := s.cfg.IDSource
+	ok := src != nil
+	if ok {
+		_, err := io.ReadFull(src, b[:])
+		ok = err == nil
+	}
+	s.idMu.Unlock()
+	if !ok {
+		_, _ = rand.Read(b[:])
+	}
 	return "ev-" + hex.EncodeToString(b[:])
 }
-

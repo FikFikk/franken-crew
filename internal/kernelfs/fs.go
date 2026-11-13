@@ -350,4 +350,3 @@ func ReadMemTotalBytes(fsys FS, procRoot string) (uint64, error) {
 	}
 	return 0, errors.New("MemTotal entry not found in /proc/meminfo")
 }
-

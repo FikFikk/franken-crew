@@ -379,4 +379,3 @@ func parsePSIFields(fields []string) (Line, error) {
 	}
 	return out, nil
 }
-

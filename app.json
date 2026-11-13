@@ -4,6 +4,30 @@
   "displayName": "FrankenCrew Sentinel",
   "description": "Self-healing Linux server sentry: deterministic Go kernel reflexes (cgroup v2, PSI, memory.events), Kiro Crew agents that triage, plan, and execute on events, and Ed25519 WhatsApp approval gates.",
   "author": "FikFikk",
+  "license": "MIT",
+  "tags": ["sre", "linux", "incident-response", "monitoring", "whatsapp"],
+  "highlights": [
+    "Go Sentinel watches PSI, cgroup v2 memory.events, and journald, and applies one reversible L1 reflex with a TTL and persistent rollback.",
+    "A conductor agent wakes on wa-bridge webhooks and runs the Sentry, Architect, and Remediator specialists for triage, planning, and execution.",
+    "Every L2 step needs a policy-checked plan and its own single-use Ed25519 token, minted only when an allowlisted admin votes in a WhatsApp poll.",
+    "The Graveyard page replays incidents: telemetry, swimlanes, agent chatter, the approval poll, verification, and the postmortem."
+  ],
+  "heroImageDark": "ui/assets/hero-dark.svg",
+  "ui": {
+    "entry": "dist/index.mjs",
+    "pages": [
+      {
+        "route": "/apps/franken-crew",
+        "label": "Graveyard",
+        "icon": "Skull",
+        "mountFunction": "mount"
+      }
+    ],
+    "sidebar": {
+      "section": "Apps",
+      "order": 10
+    }
+  },
   "agents": [
     ".kiro/agents/franken-conductor.json",
     ".kiro/agents/franken-sentry.json",

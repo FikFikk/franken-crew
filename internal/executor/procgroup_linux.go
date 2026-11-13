@@ -30,4 +30,3 @@ func killProcessGroup(cmd *exec.Cmd) error {
 	}
 	return nil
 }
-

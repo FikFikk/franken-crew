@@ -118,7 +118,7 @@ sequenceDiagram
 
 $$TTO = \frac{M_{limit} - M_{current}}{\max(\dot{M}_{ewma},\ 1\ \text{KiB/s})}$$
 
-`M_limit` = `memory.max` cgroup, atau `MemTotal − 64 MiB` untuk host. `α = 0.3`, sampling 1 Hz.
+`M_limit` = `memory.max` cgroup, atau `MemTotal − 64 MiB` untuk host. `α = 0.3` berlaku untuk sampel berjarak 1 s (sampling 1 Hz); untuk jarak Δt lain bobotnya `1 − (1 − α)^(Δt / 1 s)`, dan slope baru diperbarui setelah rentang minimum 250 ms sehingga sampel event-driven tidak memalsukan slope curam.
 
 | Severity | Kondisi (salah satu)                                          | Respons                                   |
 | -------- | ------------------------------------------------------------- | ----------------------------------------- |

@@ -111,4 +111,3 @@ func TestStream_ParsesJSONAndRedactsSecrets(t *testing.T) {
 		t.Errorf("expected pm2-root.service, got %s", ev2.Unit)
 	}
 }
-

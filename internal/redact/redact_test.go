@@ -103,7 +103,6 @@ func TestLinesAndMap(t *testing.T) {
 	}
 }
 
-
 func TestString_Tahap4TokensIndonesianPhonesAndTelemetryBounds(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -144,10 +143,10 @@ func TestString_Tahap4TokensIndonesianPhonesAndTelemetryBounds(t *testing.T) {
 
 func TestMap_RecursiveNestedSlicesAndSecretKeys(t *testing.T) {
 	input := map[string]any{
-		"api_key":    "plain-api-key",
-		"mem_bytes":  1073741824,
-		"events":     []any{"contact 0812-3456-7890", map[string]any{"authorization": "secret", "msg": "token sk-1234567890abcdefghijklmnop bytes=1073741824"}},
-		"notes":      []string{"owner +6281234567890"},
+		"api_key":   "plain-api-key",
+		"mem_bytes": 1073741824,
+		"events":    []any{"contact 0812-3456-7890", map[string]any{"authorization": "secret", "msg": "token sk-1234567890abcdefghijklmnop bytes=1073741824"}},
+		"notes":     []string{"owner +6281234567890"},
 	}
 
 	got := Map(input)
