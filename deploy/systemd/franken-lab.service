@@ -1,0 +1,57 @@
+[Unit]
+Description=FrankenCrew Graveyard Lab Dashboard (Read-Only Incident Replay Server)
+Documentation=https://github.com/FikFikk/franken-crew
+After=network-online.target tailscaled.service franken-sentinel.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# FRANKEN_SENTINEL_URL kosong/tidak ada = mode replay saja; bila diisi, FRANKEN_BEARER_TOKEN wajib ada untuk /api/status live
+EnvironmentFile=-/etc/franken/franken.env
+ExecStart=/usr/local/bin/franken lab serve --listen 127.0.0.1:3008 --data-dir /var/lib/franken/replays --sentinel ${FRANKEN_SENTINEL_URL} --token-env FRANKEN_BEARER_TOKEN
+Restart=on-failure
+RestartSec=2s
+# Lebih lama dari batas graceful shutdown 10 detik di franken lab serve
+TimeoutStopSec=15s
+
+# Dashboard publik tidak kritis: batas RAM kecil dan bobot CPU rendah agar Sentinel & wa-bridge didahulukan
+Environment=GOMEMLIMIT=24MiB
+MemoryMax=32M
+CPUWeight=50
+
+# User dinamis tanpa kapabilitas apa pun; port 3008 di loopback tidak butuh CAP_NET_BIND_SERVICE
+DynamicUser=yes
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+
+# Filesystem read-only; /var/lib disembunyikan kecuali direktori replay agar DB Sentinel dan sesi WhatsApp tidak terlihat
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+TemporaryFileSystem=/var/lib:ro
+BindReadOnlyPaths=-/var/lib/franken/replays
+UMask=0077
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+
+# Soket hanya TCP/IP (listener loopback + Sentinel via Tailscale) dan UNIX
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
