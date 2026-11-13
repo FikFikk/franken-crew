@@ -728,6 +728,13 @@ func (d *Daemon) reconcileEvaluation(ctx context.Context, cgPath, rel string, sa
 		return getErr
 	}
 
+	// Insiden yang sudah final (mis. ESCALATED setelah verifikasi gagal) tidak boleh menerima refleks atau event
+	// eskalasi severity baru selama detektor masih menganggap episode tekanannya berlangsung; tekanan lanjutan
+	// ditangani sebagai insiden baru setelah detektor menutup episode ini atau me-reopen ID-nya.
+	if isTerminalState(inc.State) && !eval.Reopened {
+		return nil
+	}
+
 	// Jika detector me-reopen ID lama yang sudah terminal di SQLite, buat sufiks ID baru agar audit trail tetap valid
 	if isTerminalState(inc.State) && eval.Reopened {
 		reopenID := fmt.Sprintf("%s-R%d", incID, d.cfg.Clock().UTC().Unix()%10000)

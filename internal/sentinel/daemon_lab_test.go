@@ -337,6 +337,50 @@ func TestDaemon_RecoveryCloseSavesTelemetrySeries(t *testing.T) {
 	}
 }
 
+// Insiden yang sudah final (mis. ESCALATED oleh verifikasi) tidak boleh menerima refleks baru hanya karena
+// detektor masih menganggap tekanannya berlangsung.
+func TestDaemon_NoReflexOrEscalationForTerminalIncident(t *testing.T) {
+	mfs := setupHealthyMemFS()
+	ld := newLabDaemon(t, mfs, nil)
+	ctx := context.Background()
+	if _, err := ld.d.EvaluateOnce(ctx, labCgroup); err != nil {
+		t.Fatalf("baseline: %v", err)
+	}
+	ld.clock.Set(ld.clock.Now().Add(time.Second))
+	mfs.SetFile(labCgroup+"/memory.pressure", "some avg10=30.00 avg60=10.00 avg300=2.00 total=900\nfull avg10=1.00 avg60=0.50 avg300=0.10 total=150\n")
+	eval, err := ld.d.EvaluateOnce(ctx, labCgroup)
+	if err != nil || !eval.IncidentOpen {
+		t.Fatalf("expected P2 incident, got %+v err=%v", eval, err)
+	}
+	before, _ := ld.store.GetReflexActionsByIncident(ctx, eval.IncidentID)
+	if err := ld.store.TransitionState(ctx, eval.IncidentID, incident.StateEscalated, "sentinel", "verify_health failed: test"); err != nil {
+		t.Fatalf("TransitionState: %v", err)
+	}
+
+	subID, events, _ := ld.srv.Broker().Subscribe(0)
+	defer ld.srv.Broker().Unsubscribe(subID)
+	for i := 0; i < 3; i++ {
+		ld.clock.Set(ld.clock.Now().Add(time.Second))
+		if _, err := ld.d.EvaluateOnce(ctx, labCgroup); err != nil {
+			t.Fatalf("EvaluateOnce after escalation: %v", err)
+		}
+	}
+	after, _ := ld.store.GetReflexActionsByIncident(ctx, eval.IncidentID)
+	if len(after) != len(before) {
+		t.Fatalf("terminal incident received %d new reflexes", len(after)-len(before))
+	}
+	for {
+		select {
+		case ev := <-events:
+			if ev.IncidentID == eval.IncidentID && (ev.Type == "reflex.applied" || ev.Type == "incident.escalated_severity") {
+				t.Fatalf("terminal incident must not publish %s", ev.Type)
+			}
+		default:
+			return
+		}
+	}
+}
+
 // setLiveTargets mengisi set target hidup tanpa menjalankan Run sehingga jalur cepat dapat diuji langsung.
 func setLiveTargets(d *Daemon, targets ...string) {
 	d.targetsMu.Lock()
