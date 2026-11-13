@@ -1,6 +1,6 @@
-// Package ui menanam aset statis dashboard Graveyard ke biner franken. Isi direktori ini hanya placeholder
-// minimal; build dashboard sebenarnya menimpa index.html, dist/, dan assets/, sedangkan data/replay.json
-// dihasilkan oleh `franken lab simulate`.
+// Package ui menanam dashboard Graveyard ke biner franken: halaman landing (index.html, assets/), modul ESM
+// tanpa build step (dist/, juga dipakai Kiro Crew lewat app.json ui.entry), dan data/replay.json yang
+// dihasilkan oleh `franken lab simulate` atau `franken lab export`.
 package ui
 
 import "embed"

@@ -388,9 +388,15 @@ func TestCLI_LabServeGracefulShutdownOnSignals(t *testing.T) {
 			if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "text/html; charset=utf-8" {
 				t.Fatalf("/ = %d %s", res.StatusCode, res.Header.Get("Content-Type"))
 			}
-			for _, want := range []string{"<!doctype html>", "<title>FrankenCrew</title>", `<div id="app">`, `<script type="module" src="./dist/index.mjs"></script>`} {
+			for _, want := range []string{"<!doctype html>", "<title>FrankenCrew", `<div id="graveyard-app"`, `<script type="module" src="./assets/site.js"></script>`} {
 				if !strings.Contains(strings.ToLower(body), strings.ToLower(want)) {
 					t.Errorf("index.html must contain %q, got %s", want, body)
+				}
+			}
+			// CSP lab hanya mengizinkan script-src 'self', jadi setiap tag script wajib memuat berkas lewat src.
+			for _, tag := range regexp.MustCompile(`(?i)<script\b[^>]*>`).FindAllString(body, -1) {
+				if !strings.Contains(strings.ToLower(tag), "src=") {
+					t.Errorf("index.html must not use inline scripts under the lab CSP, found %s", tag)
 				}
 			}
 			if csp := res.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") {
@@ -398,7 +404,8 @@ func TestCLI_LabServeGracefulShutdownOnSignals(t *testing.T) {
 			}
 
 			if res, body := labGet(t, client, srv.baseURL+"/dist/index.mjs"); res.StatusCode != http.StatusOK ||
-				res.Header.Get("Content-Type") != "text/javascript; charset=utf-8" || !strings.Contains(body, "export function mount(el)") {
+				res.Header.Get("Content-Type") != "text/javascript; charset=utf-8" || !strings.Contains(body, "export { mount") ||
+				!strings.Contains(body, "export default function") {
 				t.Errorf("/dist/index.mjs = %d %s %q", res.StatusCode, res.Header.Get("Content-Type"), body)
 			}
 			if res, body := labGet(t, client, srv.baseURL+"/assets/favicon.svg"); res.StatusCode != http.StatusOK ||
