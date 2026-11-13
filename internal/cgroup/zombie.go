@@ -153,3 +153,4 @@ func ScanZombies(fsys kernelfs.FS, procRoot string) (ZombieReport, error) {
 		ScannedAt:    time.Now(),
 	}, nil
 }
+

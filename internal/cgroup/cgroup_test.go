@@ -147,3 +147,4 @@ func TestZombie_ParseProcStatAndScanZombies(t *testing.T) {
 		t.Errorf("unexpected child PIDs: %v", grp.ChildPIDs)
 	}
 }
+

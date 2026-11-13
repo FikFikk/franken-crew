@@ -146,3 +146,4 @@ func computeDelta(prev, current MemoryEvents) MemoryEvents {
 	}
 	return d
 }
+
