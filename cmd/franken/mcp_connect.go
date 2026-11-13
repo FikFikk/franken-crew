@@ -18,8 +18,21 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/FikFikk/franken-crew/internal/mcpserver"
+	"github.com/FikFikk/franken-crew/internal/redact"
+)
+
+const (
+	// maxMCPResponseBodyBytes adalah batas atas body respons HTTP dari Sentinel (32 MiB); respons yang lebih besar ditolak dengan error eksplisit, tidak pernah dipotong.
+	maxMCPResponseBodyBytes = 32 << 20
+
+	// maxForwardErrorReasonBytes membatasi panjang alasan kegagalan yang ditulis ke stderr dan ke pesan error JSON-RPC.
+	maxForwardErrorReasonBytes = 256
+
+	// jsonRPCInternalErrorCode adalah kode "Internal error" JSON-RPC 2.0 untuk request yang gagal diteruskan.
+	jsonRPCInternalErrorCode = -32603
 )
 
 func runMCPConnect(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -178,14 +191,19 @@ func (p *stdioHTTPMCPProxy) Relay(ctx context.Context, in io.Reader, out, errOut
 			if ctx.Err() != nil {
 				return nil
 			}
-			// Catat kegagalan transport pada stderr tanpa menghentikan sesi secara mendadak kecuali fatal
-			fmt.Fprintf(errOut, "mcp connect forward warning: %v\n", err)
+			// Catat kegagalan pada stderr tanpa menghentikan sesi; request ber-id wajib menerima error JSON-RPC agar klien tidak menunggu selamanya
+			reason := p.forwardFailureReason(err)
+			fmt.Fprintf(errOut, "mcp connect forward warning: %s\n", reason)
+			if id, ok := jsonRPCRequestID(line); ok {
+				if writeErr := writeJSONRPCError(out, id, reason); writeErr != nil {
+					return writeErr
+				}
+			}
 			continue
 		}
 		for _, msg := range responses {
-			compact := compactJSONLine(msg)
-			if _, writeErr := fmt.Fprintln(out, string(compact)); writeErr != nil {
-				return writeErr
+			if _, writeErr := out.Write(append(msg, '\n')); writeErr != nil {
+				return fmt.Errorf("write JSON-RPC response: %w", writeErr)
 			}
 		}
 	}
@@ -232,65 +250,173 @@ func (p *stdioHTTPMCPProxy) forwardMessage(ctx context.Context, payload []byte) 
 		return nil, nil
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	body, readErr := readMCPResponseBody(resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Token disensor dari seluruh body sebelum dipotong agar potongan token tidak ikut lolos
+		detail := truncateUTF8(strings.TrimSpace(p.scrubBearerToken(string(body))), maxForwardErrorReasonBytes)
+		return nil, fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, p.endpoint, detail)
+	}
+	if readErr != nil {
+		return nil, readErr
+	}
+
+	var messages [][]byte
+	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+	if strings.Contains(contentType, "text/event-stream") {
+		messages, err = extractSSEDataMessages(body)
+		if err != nil {
+			return nil, fmt.Errorf("parse SSE response: %w", err)
+		}
+	} else if trimmed := bytes.TrimSpace(body); len(trimmed) > 0 {
+		messages = [][]byte{trimmed}
+	}
+
+	// Setiap pesan dipadatkan menjadi satu baris JSON valid; satu pesan rusak menggagalkan seluruh respons agar tidak ada JSON parsial yang diteruskan
+	var lines [][]byte
+	for _, msg := range messages {
+		line, err := compactJSONLine(msg)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, line)
+	}
+	return lines, nil
+}
+
+// readMCPResponseBody membaca body respons hingga maxMCPResponseBodyBytes; body yang lebih besar menghasilkan error eksplisit, bukan dipotong.
+func readMCPResponseBody(r io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, maxMCPResponseBodyBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read HTTP response: %w", err)
 	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, p.endpoint, strings.TrimSpace(string(body)))
+	if len(body) > maxMCPResponseBodyBytes {
+		return nil, fmt.Errorf("HTTP response body exceeds %d byte limit", maxMCPResponseBodyBytes)
 	}
-
-	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
-	if strings.Contains(contentType, "text/event-stream") {
-		return extractSSEDataMessages(body), nil
-	}
-
-	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) == 0 {
-		return nil, nil
-	}
-	return [][]byte{trimmed}, nil
+	return body, nil
 }
 
 // extractSSEDataMessages mengekstrak payload JSON dari blok event SSE `data: ...`.
-func extractSSEDataMessages(raw []byte) [][]byte {
+// Baris dipotong langsung dari body yang ukurannya sudah dibatasi, sehingga satu baris boleh sebesar batas body respons.
+// Baris yang melebihi batas atau payload yang bukan JSON valid menghasilkan error, bukan dibuang diam-diam.
+func extractSSEDataMessages(raw []byte) ([][]byte, error) {
 	var messages [][]byte
-	var dataLines []string
+	var dataLines [][]byte
 
-	flush := func() {
+	flush := func() error {
 		if len(dataLines) == 0 {
-			return
+			return nil
 		}
-		joined := strings.TrimSpace(strings.Join(dataLines, "\n"))
-		if joined != "" {
-			messages = append(messages, []byte(joined))
-		}
+		joined := bytes.TrimSpace(bytes.Join(dataLines, []byte("\n")))
 		dataLines = nil
+		// Event dengan data kosong (mis. priming event) bukan pesan JSON-RPC sehingga dilewati
+		if len(joined) == 0 {
+			return nil
+		}
+		if !json.Valid(joined) {
+			return fmt.Errorf("event %d data is not valid JSON", len(messages)+1)
+		}
+		messages = append(messages, joined)
+		return nil
 	}
 
-	scanner := bufio.NewScanner(bytes.NewReader(raw))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			flush()
-			continue
+	for rest := raw; len(rest) > 0; {
+		var line []byte
+		line, rest, _ = bytes.Cut(rest, []byte("\n"))
+		line = bytes.TrimSuffix(line, []byte("\r"))
+		if len(line) > maxMCPResponseBodyBytes {
+			return nil, fmt.Errorf("line exceeds %d byte limit", maxMCPResponseBodyBytes)
 		}
-		if strings.HasPrefix(line, ":") {
-			continue
-		}
-		if strings.HasPrefix(line, "data:") {
-			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		switch {
+		case len(line) == 0:
+			if err := flush(); err != nil {
+				return nil, err
+			}
+		case line[0] == ':':
+			// Baris komentar SSE (mis. keep-alive) diabaikan
+		case bytes.HasPrefix(line, []byte("data:")):
+			dataLines = append(dataLines, bytes.TrimSpace(line[len("data:"):]))
 		}
 	}
-	flush()
-	return messages
+	if err := flush(); err != nil {
+		return nil, err
+	}
+	return messages, nil
 }
 
-func compactJSONLine(raw []byte) []byte {
+// compactJSONLine memadatkan satu pesan JSON menjadi satu baris; JSON tidak valid ditolak agar tidak pernah diteruskan sebagian.
+func compactJSONLine(raw []byte) ([]byte, error) {
 	var buf bytes.Buffer
-	if err := json.Compact(&buf, raw); err == nil {
-		return buf.Bytes()
+	if err := json.Compact(&buf, raw); err != nil {
+		return nil, fmt.Errorf("response is not valid JSON: %w", err)
 	}
-	return bytes.ReplaceAll(bytes.TrimSpace(raw), []byte("\n"), []byte(" "))
+	return buf.Bytes(), nil
+}
+
+// scrubBearerToken mengganti setiap kemunculan token bearer dengan penanda tersensor.
+func (p *stdioHTTPMCPProxy) scrubBearerToken(s string) string {
+	if p.bearerToken == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, p.bearerToken, "[REDACTED_TOKEN]")
+}
+
+// forwardFailureReason menyusun alasan kegagalan singkat satu baris untuk stderr dan stdout dengan token bearer serta data sensitif lain disensor.
+func (p *stdioHTTPMCPProxy) forwardFailureReason(err error) string {
+	reason := strings.Join(strings.Fields(p.scrubBearerToken(err.Error())), " ")
+	return truncateUTF8(redact.String(reason), maxForwardErrorReasonBytes)
+}
+
+// truncateUTF8 memotong s menjadi paling banyak limit byte tanpa memecah rune UTF-8.
+func truncateUTF8(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
+
+// jsonRPCRequestID mengembalikan id mentah (tipe JSON aslinya dipertahankan) bila line adalah request JSON-RPC.
+// Notifikasi (tanpa id) dan response dari klien (tanpa method) tidak menghasilkan id.
+func jsonRPCRequestID(line []byte) (json.RawMessage, bool) {
+	var envelope struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+	}
+	if err := json.Unmarshal(line, &envelope); err != nil || envelope.Method == "" || len(envelope.ID) == 0 {
+		return nil, false
+	}
+	return envelope.ID, true
+}
+
+// jsonRPCErrorResponse adalah response error JSON-RPC 2.0 yang dikirim proxy ketika request gagal diteruskan.
+type jsonRPCErrorResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Error   jsonRPCError    `json:"error"`
+}
+
+// jsonRPCError adalah objek error JSON-RPC 2.0.
+type jsonRPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// writeJSONRPCError menulis tepat satu response error JSON-RPC 2.0 berakhiran newline untuk id request yang gagal.
+func writeJSONRPCError(out io.Writer, id json.RawMessage, message string) error {
+	line, err := json.Marshal(jsonRPCErrorResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error:   jsonRPCError{Code: jsonRPCInternalErrorCode, Message: message},
+	})
+	if err != nil {
+		return fmt.Errorf("encode JSON-RPC error response: %w", err)
+	}
+	if _, err := out.Write(append(line, '\n')); err != nil {
+		return fmt.Errorf("write JSON-RPC error response: %w", err)
+	}
+	return nil
 }
