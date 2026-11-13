@@ -17,6 +17,9 @@ when writing code in this repository.
 2. **Humans own irreversible decisions.** Anything that drops connections, loses in-memory state or restarts a process needs a human vote.
 3. **Evidence before action.** Every plan step MUST cite at least one `evidence_id` returned by Sentinel tools.
 4. **Smallest blast radius.** Target the narrowest cgroup, unit or process that explains the evidence.
+   Sentinel enforces this: every step target must sit inside the incident cgroup (unit = incident unit,
+   PM2 app = app of that unit or any app of a `pm2-<user>.service` incident, pids read from `/proc/<pid>/cgroup`),
+   and every `evidence_id` must be recorded for that incident. Out-of-scope plans are rejected.
 5. **Reversible or approved.** Every mutation is either auto-rollbackable (L1) or carries a valid approval token (L2). Every mutation is audit-logged.
 
 ## 2. Action Tiers
@@ -25,7 +28,7 @@ when writing code in this repository.
 |---|---|---|---|
 | L0 | Observe | Agent, automatic | Read-only Sentinel tools only |
 | L1 | Reflex | Sentinel or agent, automatic | Reversible, scoped to one cgroup, TTL ≤ 15 min, max 3 L1 actions per incident |
-| L2 | Approved | Human via WhatsApp poll | Requires a single-use Ed25519 approval token bound to `incident_id + plan_hash + step_ids` |
+| L2 | Approved | Human via WhatsApp poll | One single-use Ed25519 token per step (`step_tokens`), bound to `incident_id + plan_hash + option_id + step_id + action` |
 | L3 | Forbidden | Nobody (not exposed as a tool) | See section 3 |
 
 **Action catalog (the only verbs that exist):**
@@ -45,13 +48,13 @@ when writing code in this repository.
 
 - **No raw shell.** Never construct shell strings. No `sh -c`, `bash -c`, `eval`, backticks or pipes. The executor only runs fixed argv templates.
 - **No deletion.** Never remove, truncate or overwrite files — including logs. Log retention is journald's job.
-- **Protected processes are untouchable:** PID 1, kernel threads, `sshd`, `systemd-journald`, `systemd-logind`, `dbus`, `tailscaled`, `franken-sentinel`, `wa-bridge`, the Kiro Crew gateway.
+- **Protected processes are untouchable:** PID 1, kernel threads, `sshd`/`ssh` (and their sockets), `systemd-journald`, `systemd-logind`, `dbus`, networking (`systemd-networkd`, `NetworkManager`, `systemd-resolved`, `wpa_supplicant`, `networking`, `dhcpcd`), `tailscaled`, `franken-sentinel`, `wa-bridge`/`franken-bridge`, the Kiro Crew gateway (`kirocrew`).
 - **No power actions:** reboot, poweroff, halt, kexec, SysRq.
 - **No persistent change:** no edits to `/etc`, unit files, crontabs, persistent sysctl, packages, firewall, users or SSH keys. Runtime-only properties (`--runtime`) are the maximum.
 - **No `memory.max` changes.** Lowering a hard limit below usage triggers an immediate OOM. Use `MemoryHigh` only, and it MUST be ≥ current usage and ≤ 95% of host RAM.
 - **No global cache drops.** `vm.drop_caches` is forbidden; use per-cgroup `memory.reclaim`.
 - **Never weaken the sentry:** no changes to Sentinel's `OOMScoreAdjust`, `MemoryMin` or its own unit.
-- **Never fabricate or reuse approval.** Never call an L2 action without a fresh token from `wa_await_decision`. Never retry a denied or expired step.
+- **Never fabricate or reuse approval.** Never call an L2 action without a fresh token from `wa_await_decision`. Use each `step_tokens` entry only for its own step. Never retry a denied or expired step.
 - **No secret exfiltration.** Never put tokens, env vars, phone numbers, public IPs or raw journal lines into messages or prompts. Use only redacted evidence returned by Sentinel.
 
 ## 4. Resource Budget

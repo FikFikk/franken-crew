@@ -33,8 +33,8 @@ const (
 	HealthPSIHalfSomeMax = 5.0
 	// HealthPSIHalfFullMax adalah batas sehat PSI full avg10 (< 1.0) selama verifikasi 120 detik (steering Section 7).
 	HealthPSIHalfFullMax = 1.0
-	// MaxVerifyMemoryGrowthPct adalah batas pertumbuhan RAM wajar (%) sepanjang jendela pemulihan 120 detik.
-	MaxVerifyMemoryGrowthPct = 15.0
+	// MinStableTTOSeconds adalah proyeksi Time-To-OOM minimum (10 menit) agar tren memori pasca-remediasi dianggap stabil.
+	MinStableTTOSeconds = 600.0
 	// MaxCgroupMemoryUtilizationPct menolak kelulusan verifikasi bila RAM live >= 95% dari memory.max cgroup.
 	MaxCgroupMemoryUtilizationPct = 95.0
 )
@@ -135,6 +135,10 @@ type HealthChecksDetail struct {
 	MemoryStartBytes   uint64  `json:"memory_start_bytes,omitempty"`
 	MemoryEndBytes     uint64  `json:"memory_end_bytes,omitempty"`
 	MemoryGrowthPct    float64 `json:"memory_growth_pct,omitempty"`
+	// Tren memori jendela forward: kemiringan regresi linear, sisa ruang ke batas, dan proyeksi TTO
+	MemorySlopeBytesPerSec float64  `json:"memory_slope_bytes_per_sec"`
+	MemoryHeadroomBytes    uint64   `json:"memory_headroom_bytes,omitempty"`
+	MemoryTTOSeconds       *float64 `json:"memory_tto_seconds,omitempty"`
 	MemoryStable       bool    `json:"memory_stable"`
 	OOMKillCount       uint64  `json:"oom_kill_count"`
 	WindowSamples      int     `json:"window_samples_checked"`
@@ -249,6 +253,16 @@ func (s *Server) handlePlanSubmit(ctx context.Context, _ *mcp.CallToolRequest, i
 	if len(schemaViolations) > 0 {
 		res.Valid = false
 		res.Violations = append(res.Violations, schemaViolations...)
+	}
+
+	// Setiap evidence_id wajib tercatat untuk insiden ini dan setiap target wajib berada di cgroup insiden
+	scopeViolations, err := s.validatePlanAgainstIncident(ctx, inc, &plan)
+	if err != nil {
+		return nil, PlanSubmitOutput{}, err
+	}
+	if len(scopeViolations) > 0 {
+		res.Valid = false
+		res.Violations = append(res.Violations, scopeViolations...)
 	}
 
 	if !res.Valid {
@@ -396,6 +410,13 @@ func (s *Server) handleActionExecute(ctx context.Context, _ *mcp.CallToolRequest
 	}
 	if isTerminalState(inc.State) {
 		return nil, ActionExecuteOutput{}, fmt.Errorf("cannot execute action on terminal incident %s (state=%s)", incID, inc.State)
+	}
+
+	// Ulangi pembatasan target terhadap cgroup insiden tepat sebelum eksekusi (proses bisa pindah/PID dipakai ulang),
+	// dan lakukan sebelum verifikasi token agar nonce tidak terbuang pada target yang ditolak
+	if err := s.checkStepTargetScope(inc, actionName, in.Params); err != nil {
+		_ = s.cfg.Store.RecordAudit(ctx, incID, "sentinel", "ACTION_BLOCKED_SCOPE", fmt.Sprintf(`{"step_id":%q,"action":%q,"error":%q}`, stepID, actionName, err.Error()))
+		return nil, ActionExecuteOutput{}, err
 	}
 
 	// 3. Validasi langkah terhadap plan tervalidasi + konsistensi parameter kanonik
@@ -869,6 +890,10 @@ func (s *Server) handleVerifyHealth(ctx context.Context, _ *mcp.CallToolRequest,
 	inc, err := s.cfg.Store.GetIncident(ctx, incID)
 	if err != nil {
 		return nil, VerifyHealthOutput{}, err
+	}
+	if in.AutoTransition {
+		// Tandai insiden sedang diverifikasi agar transisi akhir REMEDIATING -> VERIFYING -> RESOLVED sah
+		inc = s.ensureVerifying(ctx, inc)
 	}
 
 	cgTarget := strings.TrimSpace(in.Cgroup)

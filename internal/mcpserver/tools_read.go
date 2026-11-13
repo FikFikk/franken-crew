@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/FikFikk/franken-crew/internal/cgroup"
 	"github.com/FikFikk/franken-crew/internal/incident"
 	"github.com/FikFikk/franken-crew/internal/kernelfs"
+	"github.com/FikFikk/franken-crew/internal/policy"
 	"github.com/FikFikk/franken-crew/internal/psi"
 	"github.com/FikFikk/franken-crew/internal/redact"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -81,7 +83,9 @@ type RedactedEvidenceView struct {
 
 // IncidentGetOutput memuat detail lengkap insiden beserta evidence terredaksi, reflex, dan audit trail.
 type IncidentGetOutput struct {
-	Incident   incident.Incident      `json:"incident"`
+	Incident incident.Incident `json:"incident"`
+	// PlanHash adalah hash SHA-256 kanonik dari plan tersimpan (dihitung sebelum redaksi) untuk wa_request_approval
+	PlanHash   string                 `json:"plan_hash,omitempty"`
 	Evidence   []RedactedEvidenceView `json:"evidence"`
 	Reflexes   []incident.ReflexAction `json:"reflexes"`
 	AuditTrail []incident.AuditEntry  `json:"audit_trail"`
@@ -131,7 +135,7 @@ type JournalTailInput struct {
 
 // JournalTailOutput memuat baris log yang sudah disensor beserta evidence_id rujukannya.
 type JournalTailOutput struct {
-	EvidenceID string    `json:"evidence_id"`
+	EvidenceID string    `json:"evidence_id,omitempty"`
 	Unit       string    `json:"unit"`
 	Lines      []string  `json:"lines"`
 	CapturedAt time.Time `json:"captured_at"`
@@ -190,7 +194,7 @@ func (s *Server) registerReadTools() {
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "journal_tail",
-		Description: "Fetch up to 200 redacted journald log lines for a systemd unit and assign a citable evidence_id (Level 0 read-only).",
+		Description: "Fetch up to 200 redacted journald log lines for a systemd unit (Level 0 read-only). Pass incident_id to persist the lines as evidence and receive a citable evidence_id; without incident_id no evidence_id is returned.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, s.handleJournalTail)
 
@@ -346,8 +350,21 @@ func (s *Server) handleIncidentGet(ctx context.Context, _ *mcp.CallToolRequest, 
 		auditView[i] = entry
 	}
 
+	// Hitung plan_hash dari plan tersimpan asli (bukan versi tersensor) agar identik dengan hash yang diikat token
+	var planHash string
+	if strings.TrimSpace(inc.PlanJSON) != "" {
+		var stored policy.Plan
+		if err := json.Unmarshal([]byte(inc.PlanJSON), &stored); err != nil {
+			return nil, IncidentGetOutput{}, fmt.Errorf("decode stored plan_json for %s: %w", inc.ID, err)
+		}
+		if planHash, err = policy.ComputePlanHash(&stored); err != nil {
+			return nil, IncidentGetOutput{}, fmt.Errorf("compute plan_hash for %s: %w", inc.ID, err)
+		}
+	}
+
 	return nil, IncidentGetOutput{
 		Incident:   incView,
+		PlanHash:   planHash,
 		Evidence:   evidenceView,
 		Reflexes:   reflexes,
 		AuditTrail: auditView,
@@ -467,11 +484,14 @@ func (s *Server) handleJournalTail(ctx context.Context, _ *mcp.CallToolRequest, 
 		redactedLines = []string{}
 	}
 
-	evID := newEvidenceID()
+	// evidence_id hanya diterbitkan bila snapshot benar-benar tersimpan, karena plan_submit memverifikasi
+	// setiap evidence_id terhadap SQLite; ID tanpa snapshot tidak boleh bisa dikutip
+	var evID string
 	now := s.cfg.Clock().UTC()
 
 	// Jika terhubung ke insiden aktif, simpan snapshot bukti tersensor ke SQLite
 	if incID := strings.TrimSpace(in.IncidentID); incID != "" {
+		evID = newEvidenceID()
 		if _, gErr := s.cfg.Store.GetIncident(ctx, incID); gErr != nil {
 			return nil, JournalTailOutput{}, fmt.Errorf("lookup incident %s for evidence snapshot: %w", incID, gErr)
 		}

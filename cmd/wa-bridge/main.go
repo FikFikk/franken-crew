@@ -69,6 +69,9 @@ type bridgeFlags struct {
 	heartbeatEvery time.Duration
 	missedMax      int
 	pollTTL        time.Duration
+	crewWebhookURL string
+	crewTokenEnv   string
+	crewAgent      string
 }
 
 func defaultWAMCPListenAddr() string {
@@ -97,6 +100,30 @@ func registerBridgeFlags(fs *flag.FlagSet, f *bridgeFlags) {
 	fs.DurationVar(&f.heartbeatEvery, "heartbeat-interval", wabridge.DefaultHeartbeatInterval, "Sentinel heartbeat watch interval")
 	fs.IntVar(&f.missedMax, "missed-heartbeats", wabridge.DefaultMaxMissedHeartbeats, "consecutive missed heartbeats before Node Silent Alert")
 	fs.DurationVar(&f.pollTTL, "poll-ttl", wabridge.DefaultPollTTL, "expiration duration for WhatsApp approval polls")
+	fs.StringVar(&f.crewWebhookURL, "crew-webhook-url", strings.TrimSpace(os.Getenv("FRANKEN_CREW_WEBHOOK_URL")), "Kiro Crew webhook (POST /api/hooks/agent) used to start TRIAGE and EXECUTE phases; empty disables event-driven triggers")
+	fs.StringVar(&f.crewTokenEnv, "crew-token-env", "KIROCREW_TOKEN", "environment variable holding the Kiro Crew webhook bearer token (mint with `kirocrew token`)")
+	fs.StringVar(&f.crewAgent, "crew-agent", strings.TrimSpace(os.Getenv("FRANKEN_CREW_AGENT")), "optional agent field sent with the webhook (only if your Crew gateway accepts it)")
+}
+
+// buildCrewNotifier membangun klien webhook Kiro Crew bila URL dikonfigurasi; nil berarti pemicu event-driven nonaktif.
+func buildCrewNotifier(cfg bridgeFlags, getenv func(string) string) (wabridge.CrewNotifier, error) {
+	webhookURL := strings.TrimSpace(cfg.crewWebhookURL)
+	if webhookURL == "" {
+		return nil, nil
+	}
+	tokenEnv := strings.TrimSpace(cfg.crewTokenEnv)
+	if tokenEnv == "" {
+		tokenEnv = "KIROCREW_TOKEN"
+	}
+	token := strings.TrimSpace(getenv(tokenEnv))
+	if token == "" {
+		return nil, fmt.Errorf("kiro crew webhook token env var %s is empty", tokenEnv)
+	}
+	wh, err := wabridge.NewCrewWebhook(wabridge.CrewWebhookConfig{URL: webhookURL, Token: token, Agent: cfg.crewAgent})
+	if err != nil {
+		return nil, err
+	}
+	return wh, nil
 }
 
 func runLogin(args []string, stdout, stderr io.Writer) int {
@@ -326,6 +353,13 @@ func buildBridgeRuntime(cfg bridgeFlags, stderr io.Writer, onFatal func(error)) 
 		return nil, "", nil, err
 	}
 
+	crewNotifier, err := buildCrewNotifier(cfg, os.Getenv)
+	if err != nil {
+		_ = container.Close()
+		_ = sentinelClient.Close()
+		return nil, "", nil, err
+	}
+
 	bridge, err := wabridge.New(wabridge.Config{
 		NodeName:            cfg.nodeName,
 		AdminAllowlist:      admins,
@@ -336,6 +370,7 @@ func buildBridgeRuntime(cfg bridgeFlags, stderr io.Writer, onFatal func(error)) 
 		HeartbeatInterval:   cfg.heartbeatEvery,
 		MaxMissedHeartbeats: cfg.missedMax,
 		PollTTL:             cfg.pollTTL,
+		Crew:                crewNotifier,
 		OnAudit: func(evType, detail string) {
 			fmt.Fprintf(stderr, "[wa-bridge] %s: %s\n", evType, detail)
 		},

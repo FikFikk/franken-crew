@@ -657,6 +657,9 @@ func seedBaseMemFS() *kernelfs.MemFS {
 	mfs.SetFile("/proc/1200/status", "Name:\tnode\nVmRSS:\t  150000 kB\n")
 	mfs.SetFile("/proc/1305/stat", "1305 (worker) S 1200 1200 1200 0 -1 4194560 0 0 0 0\n")
 	mfs.SetFile("/proc/1305/status", "Name:\tworker\nVmRSS:\t   20000 kB\n")
+	// Keanggotaan cgroup v2 tiap proses: Sentinel hanya mengizinkan sinyal ke PID di dalam cgroup insiden
+	mfs.SetFile("/proc/1200/cgroup", "0::/franken.slice/haunted-api.service\n")
+	mfs.SetFile("/proc/1305/cgroup", "0::/franken.slice/haunted-api.service\n")
 	return mfs
 }
 

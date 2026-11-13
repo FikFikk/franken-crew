@@ -74,6 +74,7 @@ func TestKiroConfigurations_ValidJSONAndNoRawShell(t *testing.T) {
 
 	jsonFiles := []string{
 		filepath.Join("..", "app.json"),
+		filepath.Join("..", ".kiro", "agents", "franken-conductor.json"),
 		filepath.Join("..", ".kiro", "agents", "franken-sentry.json"),
 		filepath.Join("..", ".kiro", "agents", "franken-architect.json"),
 		filepath.Join("..", ".kiro", "agents", "franken-remediator.json"),
@@ -113,7 +114,7 @@ func TestKiroConfigurations_ValidJSONAndNoRawShell(t *testing.T) {
 	}
 
 	// Validasi schema Kiro V3 pada ketiga agen dan larangan shell/fs_write.
-	for _, agentFile := range []string{"franken-sentry.json", "franken-architect.json", "franken-remediator.json"} {
+	for _, agentFile := range []string{"franken-conductor.json", "franken-sentry.json", "franken-architect.json", "franken-remediator.json"} {
 		agentPath := filepath.Join("..", ".kiro", "agents", agentFile)
 		raw, err := os.ReadFile(agentPath)
 		if err != nil {
@@ -250,8 +251,8 @@ func TestKiroConfigurations_ValidJSONAndNoRawShell(t *testing.T) {
 	if app.Name != "franken-crew" || app.Version == "" || app.DisplayName == "" {
 		t.Errorf("metadata inti app.json tidak lengkap: %+v", app)
 	}
-	if len(app.Agents) != 3 || len(app.Skills) != 3 || len(app.Crons) != 2 || len(app.MCPServers) < 2 {
-		t.Errorf("app.json harus mendaftarkan 3 agents, 3 skills, 2 crons, dan mcpServers: %+v", app)
+	if len(app.Agents) != 4 || len(app.Skills) != 3 || len(app.Crons) != 2 || len(app.MCPServers) < 2 {
+		t.Errorf("app.json harus mendaftarkan 4 agents (conductor + 3 spesialis), 3 skills, 2 crons, dan mcpServers: %+v", app)
 	}
 	for _, a := range app.Agents {
 		if strings.Contains(a, "..") || filepath.IsAbs(a) {

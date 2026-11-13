@@ -28,9 +28,10 @@ import (
 )
 
 const (
-	defaultSampleInterval   = 1 * time.Second
-	defaultRollbackInterval = 1 * time.Second
-	maxDiscoveredCgroups    = 32
+	defaultSampleInterval     = 1 * time.Second
+	defaultRollbackInterval   = 1 * time.Second
+	defaultRediscoverInterval = 10 * time.Second
+	maxDiscoveredCgroups      = 32
 )
 
 // Config menyimpan seluruh dependensi dan parameter runtime untuk daemon Sentinel.
@@ -53,6 +54,8 @@ type Config struct {
 	MCPServer        *mcpserver.Server
 	HTTPAddr         string
 	Clock            func() time.Time
+	// RediscoverInterval mengatur seberapa sering set target cgroup dipindai ulang (default 10 detik).
+	RediscoverInterval time.Duration
 }
 
 // Daemon mengorkestrasi seluruh pipeline Sentinel: startup probe, kolektor telemetri,
@@ -65,6 +68,18 @@ type Daemon struct {
 	evalMu        sync.Mutex
 	openByCgroup  map[string]string
 	lastSeverity  map[string]detector.Severity
+	// Set target hidup: targetOrder menyimpan path absolut sesuai urutan discovery, targetCancel
+	// menyimpan pembatal context watcher per target. Keduanya selalu berisi kunci yang sama.
+	targetsMu    sync.Mutex
+	targetOrder  []string
+	targetCancel map[string]context.CancelFunc
+}
+
+// targetWatchSinks menyatukan WaitGroup milik Run dan channel fast-path yang dipakai watcher per target.
+type targetWatchSinks struct {
+	wg       *sync.WaitGroup
+	psiCh    chan<- psi.PressureEvent
+	eventsCh chan<- cgroup.EventsDelta
 }
 
 // New membangun instance Sentinel Daemon setelah memvalidasi dependensi inti.
@@ -95,6 +110,9 @@ func New(cfg Config) (*Daemon, error) {
 	}
 	if cfg.RollbackInterval <= 0 {
 		cfg.RollbackInterval = defaultRollbackInterval
+	}
+	if cfg.RediscoverInterval <= 0 {
+		cfg.RediscoverInterval = defaultRediscoverInterval
 	}
 	if cfg.Clock == nil {
 		cfg.Clock = func() time.Time { return time.Now().UTC() }
@@ -134,6 +152,7 @@ func New(cfg Config) (*Daemon, error) {
 		eventsWatcher: eventsWatcher,
 		openByCgroup:  make(map[string]string),
 		lastSeverity:  make(map[string]detector.Severity),
+		targetCancel:  make(map[string]context.CancelFunc),
 	}, nil
 }
 
@@ -150,13 +169,21 @@ func (d *Daemon) Run(ctx context.Context) error {
 	_ = d.cfg.Store.RecordAudit(ctx, "", "sentinel", "DAEMON_STARTED",
 		fmt.Sprintf(`{"node":%q,"cgroup_v2":%t,"psi":%t,"memory_reclaim":%t}`, d.cfg.NodeName, caps.CgroupV2, caps.PSI, caps.MemoryReclaim))
 
-	targets := d.resolveTargetCgroups()
-
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	var wg sync.WaitGroup
-	errCh := make(chan error, len(targets)*2+4)
+	// Hanya scheduler refleks dan HTTP server yang mengirim error fatal; watcher per target cukup mencatat audit
+	errCh := make(chan error, 4)
+
+	psiEvents := make(chan psi.PressureEvent, 64)
+	evDeltas := make(chan cgroup.EventsDelta, 64)
+	sinks := targetWatchSinks{wg: &wg, psiCh: psiEvents, eventsCh: evDeltas}
+
+	// Bentuk set target awal (beserta watcher fast-path per target) sebelum sampler membaca baseline,
+	// lalu kosongkan set saat Run selesai agar daemon dapat dijalankan ulang dengan bersih.
+	d.reconcileTargets(runCtx, sinks)
+	defer d.stopAllTargets()
 
 	// 1. Jalankan scheduler rollback TTL refleks L1 (termasuk sweep saldo TTL pasca-restart)
 	wg.Add(1)
@@ -167,40 +194,19 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 	}()
 
-	// 2. Jalankan sampler periodik 1 Hz untuk seluruh cgroup target dan PSI host
+	// 2. Jalankan sampler periodik 1 Hz untuk seluruh cgroup target hidup dan PSI host
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		d.runSamplingLoop(runCtx, targets)
+		d.runSamplingLoop(runCtx)
 	}()
 
-	// 3. Jalankan fast-path PSI watcher + memory.events inotify watcher per target cgroup
-	psiEvents := make(chan psi.PressureEvent, 64)
-	evDeltas := make(chan cgroup.EventsDelta, 64)
-
-	for _, cgPath := range targets {
-		rel := d.relativeCgroup(cgPath)
-		pressureFile := kernelfs.JoinPath(cgPath, "memory.pressure")
-		eventsFile := kernelfs.JoinPath(cgPath, "memory.events")
-
-		wg.Add(1)
-		go func(targetRel, pPath string) {
-			defer wg.Done()
-			if wErr := d.psiWatcher.WatchTarget(runCtx, targetRel, pPath, psiEvents); wErr != nil && runCtx.Err() == nil {
-				_ = d.cfg.Store.RecordAudit(context.Background(), "", "sentinel", "PSI_WATCH_WARN", fmt.Sprintf(`{"cgroup":%q,"error":%q}`, targetRel, wErr.Error()))
-			}
-		}(rel, pressureFile)
-
-		if _, statErr := d.cfg.FS.Stat(eventsFile); statErr == nil {
-			wg.Add(1)
-			go func(targetRel, ePath string) {
-				defer wg.Done()
-				if wErr := d.eventsWatcher.WatchTarget(runCtx, targetRel, ePath, evDeltas); wErr != nil && runCtx.Err() == nil {
-					_ = d.cfg.Store.RecordAudit(context.Background(), "", "sentinel", "EVENTS_WATCH_WARN", fmt.Sprintf(`{"cgroup":%q,"error":%q}`, targetRel, wErr.Error()))
-				}
-			}(rel, eventsFile)
-		}
-	}
+	// 3. Pindai ulang target cgroup secara berkala agar workload yang muncul atau hilang setelah startup ikut terkelola
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		d.runRediscoveryLoop(runCtx, sinks)
+	}()
 
 	// Pasang PSI watcher pada tingkat host (/proc/pressure/memory)
 	hostPressure := kernelfs.JoinPath(d.cfg.ProcRoot, "pressure/memory")
@@ -218,7 +224,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		d.consumeFastSignals(runCtx, targets, psiEvents, evDeltas)
+		d.consumeFastSignals(runCtx, psiEvents, evDeltas)
 	}()
 
 	// 5. Alirkan event pola OOM/ENOMEM/heap/PM2 dari systemd journal jika dikonfigurasi
@@ -320,9 +326,9 @@ func (d *Daemon) EvaluateOnce(ctx context.Context, cgPath string) (detector.Eval
 	return eval, nil
 }
 
-func (d *Daemon) runSamplingLoop(ctx context.Context, targets []string) {
+func (d *Daemon) runSamplingLoop(ctx context.Context) {
 	// Lakukan pembacaan baseline awal segera saat startup tanpa menunggu tick pertama
-	d.sampleAllTargets(ctx, targets)
+	d.sampleAllTargets(ctx, d.snapshotTargets())
 
 	ticker := time.NewTicker(d.cfg.SampleInterval)
 	defer ticker.Stop()
@@ -332,9 +338,127 @@ func (d *Daemon) runSamplingLoop(ctx context.Context, targets []string) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			d.sampleAllTargets(ctx, targets)
+			// Ambil snapshot set target hidup pada setiap tick agar target hasil rediscovery ikut disampel
+			d.sampleAllTargets(ctx, d.snapshotTargets())
 		}
 	}
+}
+
+// runRediscoveryLoop memindai ulang target cgroup setiap RediscoverInterval hingga ctx selesai.
+func (d *Daemon) runRediscoveryLoop(ctx context.Context, sinks targetWatchSinks) {
+	ticker := time.NewTicker(d.cfg.RediscoverInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			d.reconcileTargets(ctx, sinks)
+		}
+	}
+}
+
+// reconcileTargets menyelaraskan set target hidup dengan hasil resolveTargetCgroups: target baru dinyalakan
+// watcher-nya di bawah context anak, target yang tidak lagi diinginkan dibatalkan watcher-nya.
+func (d *Daemon) reconcileTargets(ctx context.Context, sinks targetWatchSinks) {
+	if ctx.Err() != nil {
+		return
+	}
+	desired := d.resolveTargetCgroups()
+
+	d.targetsMu.Lock()
+	wanted := make(map[string]bool, len(desired))
+	order := make([]string, 0, len(desired))
+	var added, removed []string
+	for _, cgPath := range desired {
+		if wanted[cgPath] {
+			continue
+		}
+		wanted[cgPath] = true
+		order = append(order, cgPath)
+		if _, exists := d.targetCancel[cgPath]; !exists {
+			d.targetCancel[cgPath] = d.startTargetWatchers(ctx, sinks, cgPath)
+			added = append(added, cgPath)
+		}
+	}
+	for _, cgPath := range d.targetOrder {
+		if wanted[cgPath] {
+			continue
+		}
+		d.targetCancel[cgPath]()
+		delete(d.targetCancel, cgPath)
+		removed = append(removed, cgPath)
+	}
+	d.targetOrder = order
+	d.targetsMu.Unlock()
+
+	// Siarkan perubahan di luar lock agar sampler dan konsumen fast-path tidak tertahan oleh I/O SSE/SQLite
+	broker := d.cfg.MCPServer.Broker()
+	for _, cgPath := range added {
+		rel := d.relativeCgroup(cgPath)
+		broker.Publish(mcpserver.StreamEvent{
+			Type:    "telemetry.target_added",
+			Summary: fmt.Sprintf("Monitoring new cgroup target %s", rel),
+			Data:    map[string]any{"cgroup": rel},
+		})
+		_ = d.cfg.Store.RecordAudit(context.Background(), "", "sentinel", "TARGET_ADDED", fmt.Sprintf(`{"cgroup":%q}`, rel))
+	}
+	for _, cgPath := range removed {
+		rel := d.relativeCgroup(cgPath)
+		broker.Publish(mcpserver.StreamEvent{
+			Type:    "telemetry.target_removed",
+			Summary: fmt.Sprintf("Stopped monitoring cgroup target %s (no longer discovered)", rel),
+			Data:    map[string]any{"cgroup": rel},
+		})
+		_ = d.cfg.Store.RecordAudit(context.Background(), "", "sentinel", "TARGET_REMOVED", fmt.Sprintf(`{"cgroup":%q}`, rel))
+	}
+}
+
+// startTargetWatchers menyalakan PSI watcher dan (bila memory.events ada) events watcher untuk satu target
+// di bawah context anak yang dapat dibatalkan. Setiap goroutine dilacak oleh WaitGroup milik Run.
+func (d *Daemon) startTargetWatchers(ctx context.Context, sinks targetWatchSinks, cgPath string) context.CancelFunc {
+	targetCtx, cancel := context.WithCancel(ctx)
+	rel := d.relativeCgroup(cgPath)
+	pressureFile := kernelfs.JoinPath(cgPath, "memory.pressure")
+	eventsFile := kernelfs.JoinPath(cgPath, "memory.events")
+
+	sinks.wg.Add(1)
+	go func() {
+		defer sinks.wg.Done()
+		if wErr := d.psiWatcher.WatchTarget(targetCtx, rel, pressureFile, sinks.psiCh); wErr != nil && targetCtx.Err() == nil {
+			_ = d.cfg.Store.RecordAudit(context.Background(), "", "sentinel", "PSI_WATCH_WARN", fmt.Sprintf(`{"cgroup":%q,"error":%q}`, rel, wErr.Error()))
+		}
+	}()
+
+	if _, statErr := d.cfg.FS.Stat(eventsFile); statErr == nil {
+		sinks.wg.Add(1)
+		go func() {
+			defer sinks.wg.Done()
+			if wErr := d.eventsWatcher.WatchTarget(targetCtx, rel, eventsFile, sinks.eventsCh); wErr != nil && targetCtx.Err() == nil {
+				_ = d.cfg.Store.RecordAudit(context.Background(), "", "sentinel", "EVENTS_WATCH_WARN", fmt.Sprintf(`{"cgroup":%q,"error":%q}`, rel, wErr.Error()))
+			}
+		}()
+	}
+	return cancel
+}
+
+// stopAllTargets membatalkan seluruh watcher per target dan mengosongkan set target hidup.
+func (d *Daemon) stopAllTargets() {
+	d.targetsMu.Lock()
+	defer d.targetsMu.Unlock()
+	for _, cancel := range d.targetCancel {
+		cancel()
+	}
+	clear(d.targetCancel)
+	d.targetOrder = nil
+}
+
+// snapshotTargets mengembalikan salinan path absolut target hidup sesuai urutan discovery.
+func (d *Daemon) snapshotTargets() []string {
+	d.targetsMu.Lock()
+	defer d.targetsMu.Unlock()
+	return slices.Clone(d.targetOrder)
 }
 
 func (d *Daemon) sampleAllTargets(ctx context.Context, targets []string) {
@@ -363,7 +487,9 @@ func (d *Daemon) sampleAllTargets(ctx context.Context, targets []string) {
 	}
 }
 
-func (d *Daemon) consumeFastSignals(ctx context.Context, targets []string, psiCh <-chan psi.PressureEvent, evCh <-chan cgroup.EventsDelta) {
+// consumeFastSignals mengevaluasi event PSI dan delta memory.events terhadap snapshot set target hidup
+// yang diambil per event; event PSI host disebar ke seluruh target terkini.
+func (d *Daemon) consumeFastSignals(ctx context.Context, psiCh <-chan psi.PressureEvent, evCh <-chan cgroup.EventsDelta) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -378,11 +504,11 @@ func (d *Daemon) consumeFastSignals(ctx context.Context, targets []string, psiCh
 				FullAvg60:  pev.Metrics.Full.Avg60,
 				FullAvg300: pev.Metrics.Full.Avg300,
 			})
-			for _, cgPath := range d.matchTargetsForRel(targets, pev.Cgroup) {
+			for _, cgPath := range d.matchTargetsForRel(d.snapshotTargets(), pev.Cgroup) {
 				_, _ = d.EvaluateOnce(ctx, cgPath)
 			}
 		case dev := <-evCh:
-			for _, cgPath := range d.matchTargetsForRel(targets, dev.Cgroup) {
+			for _, cgPath := range d.matchTargetsForRel(d.snapshotTargets(), dev.Cgroup) {
 				_, _ = d.EvaluateOnce(ctx, cgPath)
 			}
 		}
@@ -667,20 +793,29 @@ func (d *Daemon) closeIncidentOnRecovery(ctx context.Context, rel string, eval d
 
 func (d *Daemon) resolveTargetCgroups() []string {
 	if len(d.cfg.CgroupPaths) > 0 {
+		configured := false
 		out := make([]string, 0, len(d.cfg.CgroupPaths))
 		for _, p := range d.cfg.CgroupPaths {
 			trimmed := strings.TrimSpace(p)
 			if trimmed == "" {
 				continue
 			}
+			configured = true
 			if !strings.HasPrefix(trimmed, "/") {
 				trimmed = kernelfs.JoinPath(d.cfg.CgroupRoot, trimmed)
 			} else if !strings.HasPrefix(trimmed, d.cfg.CgroupRoot) {
 				trimmed = kernelfs.JoinPath(d.cfg.CgroupRoot, trimmed)
 			}
+			// Path eksplisit baru dianggap aktif setelah memory.current tersedia; path yang muncul belakangan
+			// akan ditangkap oleh tick rediscovery berikutnya.
+			if _, statErr := d.cfg.FS.Stat(kernelfs.JoinPath(trimmed, "memory.current")); statErr != nil {
+				continue
+			}
 			out = append(out, trimmed)
 		}
-		if len(out) > 0 {
+		// Bila operator mengonfigurasi path eksplisit, jangan pernah fallback ke auto-discovery
+		// walaupun belum ada satu pun path yang aktif.
+		if configured {
 			return out
 		}
 	}

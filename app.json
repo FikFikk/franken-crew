@@ -2,9 +2,10 @@
   "name": "franken-crew",
   "version": "0.2.0",
   "displayName": "FrankenCrew Sentinel",
-  "description": "Edge Linux self-healing server operator combining deterministic Go/eBPF kernel reflexes, Kiro Crew diagnostic reasoning, and Ed25519 WhatsApp approval gates.",
+  "description": "Self-healing Linux server sentry: deterministic Go kernel reflexes (cgroup v2, PSI, memory.events), Kiro Crew agents that triage, plan, and execute on events, and Ed25519 WhatsApp approval gates.",
   "author": "FikFikk",
   "agents": [
+    ".kiro/agents/franken-conductor.json",
     ".kiro/agents/franken-sentry.json",
     ".kiro/agents/franken-architect.json",
     ".kiro/agents/franken-remediator.json"
@@ -41,9 +42,9 @@
   "crons": [
     {
       "name": "incident-sweep",
-      "every": 60,
-      "agent": "franken-sentry",
-      "message": "Claim any open P1/P2/POST_OOM incident atomically with incident_claim(claimer='franken-sentry'). Gather PSI history, cgroup_top, redacted journal_tail, process_tree, and zombie_report, classify the failure pattern with confidence and evidence_ids, and coordinate diagnosis via franken-architect (plan_submit against schema/plan.schema.json) and approved L2 execution plus 120s verify_health and postmortem_generate via franken-remediator.",
+      "every": 900,
+      "agent": "franken-conductor",
+      "message": "FRANKENCREW phase=SWEEP\nSafety net for missed webhooks: wa-bridge triggers TRIAGE and EXECUTE phases on events. Run the franken-conductor SWEEP procedure: list incidents and triage only P1, P2, or POST_OOM incidents still in DETECTED or REFLEX_APPLIED. Do nothing when none are pending.",
       "enabled": true
     },
     {
@@ -54,8 +55,15 @@
       "enabled": true
     }
   ],
+  "dependencies": {
+    "commands": [
+      "franken",
+      "wa-bridge"
+    ]
+  },
   "permissions": {
     "mcpTools": [
+      "kirocrew-core/*",
       "franken-sentinel/incident_claim",
       "franken-sentinel/node_snapshot",
       "franken-sentinel/incident_list",
@@ -81,4 +89,3 @@
     "network": false
   }
 }
-

@@ -48,6 +48,7 @@ func runSentinelServe(args []string, stdout, stderr io.Writer) int {
 	var journalUnitsCSV string
 	var sampleInterval time.Duration
 	var rollbackInterval time.Duration
+	var rediscoverInterval time.Duration
 
 	fs.StringVar(&cfg.dbPath, "db", "franken-sentinel.db", "path to SQLite incident store")
 	fs.StringVar(&cfg.policyPath, "policy", "policy/actions.yaml", "path to action policy catalog YAML")
@@ -57,10 +58,14 @@ func runSentinelServe(args []string, stdout, stderr io.Writer) int {
 	fs.IntVar(&cfg.port, "port", 8090, "TCP port used when --tailscale is enabled")
 	fs.StringVar(&cfg.tokenEnv, "token-env", "FRANKEN_BEARER_TOKEN", "environment variable holding HTTP bearer auth token")
 	fs.StringVar(&cfg.nodeName, "node", "", "override Sentinel node identifier (defaults to hostname)")
+	fs.StringVar(&cfg.postmortemDir, "postmortem-dir", "incidents", "directory for incident postmortems written automatically when verification finishes (use /var/lib/franken/incidents under systemd)")
+	// Daemon Sentinel menutup loop insiden secara deterministik tanpa menunggu agen LLM
+	cfg.autoPostmortem = true
 	fs.StringVar(&cgroupsCSV, "cgroups", "", "comma-separated cgroup v2 paths to monitor (auto-discovered if omitted)")
 	fs.StringVar(&journalUnitsCSV, "journal-units", "", "comma-separated systemd units to follow via journalctl")
 	fs.DurationVar(&sampleInterval, "sample-interval", 1*time.Second, "1 Hz sampler tick interval")
 	fs.DurationVar(&rollbackInterval, "rollback-interval", 1*time.Second, "TTL reflex rollback sweep interval")
+	fs.DurationVar(&rediscoverInterval, "rediscover-interval", 10*time.Second, "interval for rescanning cgroup targets so workloads started after Sentinel are monitored")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -128,17 +133,18 @@ func runSentinelServe(args []string, stdout, stderr io.Writer) int {
 	}
 
 	daemon, err := sentinel.New(sentinel.Config{
-		NodeName:         nodeName,
-		FS:               osFS,
-		Store:            store,
-		Catalog:          cat,
-		Reflex:           reflexEng,
-		MCPServer:        srv,
-		HTTPAddr:         addr,
-		CgroupPaths:      splitCSV(cgroupsCSV),
-		JournalUnits:     splitCSV(journalUnitsCSV),
-		SampleInterval:   sampleInterval,
-		RollbackInterval: rollbackInterval,
+		NodeName:           nodeName,
+		FS:                 osFS,
+		Store:              store,
+		Catalog:            cat,
+		Reflex:             reflexEng,
+		MCPServer:          srv,
+		HTTPAddr:           addr,
+		CgroupPaths:        splitCSV(cgroupsCSV),
+		JournalUnits:       splitCSV(journalUnitsCSV),
+		SampleInterval:     sampleInterval,
+		RollbackInterval:   rollbackInterval,
+		RediscoverInterval: rediscoverInterval,
 		Detector: detector.NewDetector(detector.Config{
 			NodeName:          nodeName,
 			HostMemTotalBytes: hostTotal,

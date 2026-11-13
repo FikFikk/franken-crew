@@ -32,6 +32,9 @@ type mcpFlagsConfig struct {
 	port       int
 	tokenEnv   string
 	nodeName   string
+	// postmortemDir menentukan lokasi postmortem; autoPostmortem menulisnya otomatis saat verifikasi selesai
+	postmortemDir  string
+	autoPostmortem bool
 }
 
 func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -226,14 +229,16 @@ func buildMCPServerWithDeps(
 	}
 
 	srv, err := mcpserver.New(mcpserver.Config{
-		NodeName:    cfg.nodeName,
-		Store:       store,
-		Catalog:     cat,
-		Reflex:      reflexEng,
-		Verifier:    verifier,
-		Runner:      execRunner,
-		FS:          fsys,
-		BearerToken: bearerToken,
+		NodeName:       cfg.nodeName,
+		Store:          store,
+		Catalog:        cat,
+		Reflex:         reflexEng,
+		Verifier:       verifier,
+		Runner:         execRunner,
+		FS:             fsys,
+		BearerToken:    bearerToken,
+		PostmortemDir:  cfg.postmortemDir,
+		AutoPostmortem: cfg.autoPostmortem,
 	})
 	if err != nil {
 		return nil, nil, err

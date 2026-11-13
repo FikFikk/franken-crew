@@ -5,8 +5,26 @@ version: "1.0"
 protected_units:
   - "init"
   - "systemd"
+  # OpenSSH: Debian, Ubuntu, and Raspberry Pi OS name the unit "ssh", other distros "sshd"
+  - "ssh"
+  - "ssh.service"
+  - "ssh.socket"
   - "sshd"
   - "sshd.service"
+  - "sshd.socket"
+  # Networking: restarting any of these can cut the operator off from the box
+  - "systemd-networkd"
+  - "systemd-networkd.service"
+  - "networkmanager"
+  - "networkmanager.service"
+  - "systemd-resolved"
+  - "systemd-resolved.service"
+  - "wpa_supplicant"
+  - "wpa_supplicant.service"
+  - "networking"
+  - "networking.service"
+  - "dhcpcd"
+  - "dhcpcd.service"
   - "systemd-journald"
   - "systemd-journald.service"
   - "systemd-logind"
@@ -19,8 +37,14 @@ protected_units:
   - "franken-sentinel.service"
   - "wa-bridge"
   - "wa-bridge.service"
+  # Deployed WhatsApp bridge unit name (deploy/systemd/franken-bridge.service)
+  - "franken-bridge"
+  - "franken-bridge.service"
+  # Kiro Crew gateway (CLI binary and service are named "kirocrew")
   - "kiro-crew"
   - "kiro-crew.service"
+  - "kirocrew"
+  - "kirocrew.service"
 
 protected_pids:
   - 1

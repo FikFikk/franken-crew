@@ -303,6 +303,25 @@ func TestCLI_SentinelServeSecurityChecks(t *testing.T) {
 	}
 }
 
+func TestCLI_SentinelServeAcceptsRediscoverIntervalFlag(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	// Flag durasi yang valid harus lolos parsing sehingga eksekusi berlanjut ke pemeriksaan bearer token (exit 1, bukan 2)
+	t.Setenv("FRANKEN_SENTINEL_EMPTY", "")
+	code := run([]string{"sentinel", "serve", "--rediscover-interval", "5s", "--token-env", "FRANKEN_SENTINEL_EMPTY"}, &stdout, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "bearer token") {
+		t.Fatalf("expected --rediscover-interval 5s to parse and reach the bearer token check (exit 1), got %d (stderr=%s)", code, stderr.String())
+	}
+
+	// Nilai yang bukan durasi wajib ditolak parser flag dengan exit code 2
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"sentinel", "serve", "--rediscover-interval", "soon"}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "invalid value") {
+		t.Fatalf("expected exit code 2 with an invalid value error for --rediscover-interval soon, got %d (stderr=%s)", code, stderr.String())
+	}
+}
+
 func TestCLI_WALoginValidation(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 

@@ -330,6 +330,9 @@ func (c *Catalog) ValidatePlan(plan *Plan) (*ValidationResult, error) {
 		res.Violations = append(res.Violations, "plan must contain at least one option")
 	}
 
+	// ID langkah wajib unik di seluruh plan karena token persetujuan Ed25519 mengikat tepat satu step_id
+	seenStepIDs := make(map[string]string)
+
 	// Validasi setiap pilihan dan setiap langkah aksi di dalamnya
 	for _, opt := range plan.Options {
 		if len(opt.Steps) > 2 {
@@ -338,6 +341,15 @@ func (c *Catalog) ValidatePlan(plan *Plan) (*ValidationResult, error) {
 		}
 
 		for _, step := range opt.Steps {
+			if stepID := strings.TrimSpace(step.ID); stepID != "" {
+				if firstOpt, dup := seenStepIDs[stepID]; dup {
+					res.Valid = false
+					res.Violations = append(res.Violations, fmt.Sprintf("duplicate step id %q in options %s and %s (step ids must be unique across the plan)", stepID, firstOpt, opt.ID))
+				} else {
+					seenStepIDs[stepID] = opt.ID
+				}
+			}
+
 			sv := StepValidation{
 				StepID: step.ID,
 				Action: step.Action,

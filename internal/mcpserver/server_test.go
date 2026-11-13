@@ -637,9 +637,15 @@ func TestMCP_WriteToolsPolicyTokenAndVerification(t *testing.T) {
 			wantSub: "approval_token is required",
 		},
 		{
+			// Unit yang sama ditulis tanpa sufiks: tetap dalam cgroup insiden, tetapi parameter kanonik berbeda dari plan
 			name:   "l2_mutated_params",
-			args:   map[string]any{"incident_id": "INC-20261113-0930-pi01", "step_id": "step-l2", "action": "unit_restart", "params": map[string]any{"unit": "other-unit.service"}, "approval_token": tokL2},
+			args:   map[string]any{"incident_id": "INC-20261113-0930-pi01", "step_id": "step-l2", "action": "unit_restart", "params": map[string]any{"unit": "haunted-api"}, "approval_token": tokL2},
 			wantSub: "differ from approved plan",
+		},
+		{
+			name:    "l2_out_of_scope_unit",
+			args:    map[string]any{"incident_id": "INC-20261113-0930-pi01", "step_id": "step-l2", "action": "unit_restart", "params": map[string]any{"unit": "other-unit.service"}, "approval_token": tokL2},
+			wantSub: "outside incident scope",
 		},
 	} {
 		r, callErr := session.CallTool(ctx, &mcp.CallToolParams{Name: "action_execute", Arguments: tc.args})
@@ -1141,13 +1147,13 @@ func TestMCP_VerifyHealth_120sWindowRAMStabilityAndEscalation(t *testing.T) {
 		At:            baseLeak.Add(15 * time.Second),
 		SomeAvg10:     2.0,
 		FullAvg10:     0.1,
-		MemoryCurrent: 100 * 1024 * 1024,
+		MemoryCurrent: 1700 * 1024 * 1024,
 	})
 	h.srv.PSIRing().Record("/franken.slice/worker.service", PSIPoint{
 		At:            baseLeak.Add(110 * time.Second),
 		SomeAvg10:     2.2,
 		FullAvg10:     0.2,
-		MemoryCurrent: 150 * 1024 * 1024, // tumbuh +50% selama jendela observasi forward
+		MemoryCurrent: 1900 * 1024 * 1024, // ~2 MiB/s menuju batas host (2 GiB - 64 MiB): proyeksi OOM < 10 menit
 	})
 	h.AdvanceClock(125 * time.Second)
 
@@ -1461,6 +1467,7 @@ func TestMCP_C4_ProcessTerminateEscalatesSIGTERMToSIGKILL(t *testing.T) {
 
 		// Proses 2345 membandel: tetap berada pada state S meski sudah menerima SIGTERM
 		h.fs.SetFile("/proc/2345/stat", "2345 (stuck-worker) S 1200 1200 1200 0 -1 4194560 0 0 0 0\n")
+		h.fs.SetFile("/proc/2345/cgroup", "0::/franken.slice/haunted-api.service\n")
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -1541,6 +1548,7 @@ func TestMCP_C4_ProcessTerminateEscalatesSIGTERMToSIGKILL(t *testing.T) {
 
 		// Proses 2346 hidup saat awal, lalu keluar bersih 25ms pasca SIGTERM
 		h.fs.SetFile("/proc/2346/stat", "2346 (worker) S 1200 1200 1200 0 -1 4194560 0 0 0 0\n")
+		h.fs.SetFile("/proc/2346/cgroup", "0::/franken.slice/haunted-api.service\n")
 		go func() {
 			time.Sleep(25 * time.Millisecond)
 			h.fs.Remove("/proc/2346/stat")

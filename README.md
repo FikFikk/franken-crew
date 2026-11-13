@@ -5,8 +5,20 @@
 > **Status (Sentinel Core + Headless WhatsApp Bridge + Kiro Crew + Chaos Verification Complete)**
 >
 > - **Implemented & Tested (Go 1.26+, pure-Go static binary `CGO_ENABLED=0`):** Kernel telemetry (`kernelfs`, `psi`, `cgroup`, `journal`), EWMA Time-To-OOM `detector`, SQLite WAL `incident` store & `redact` pipeline, single-source `policy` & fixed-argv `executor`, L1 TTL `reflex` engine, Ed25519 `approval` protocol, Streamable HTTP/SSE & stdio `mcpserver` (including 120s PSI+RAM stability `verify_health` and `postmortem_generate`), unified `sentinel` daemon, headless `whatsmeow` bridge (`internal/wabridge` + `cmd/wa-bridge`), redacted markdown `postmortem` generator, systemd sandbox units (`deploy/systemd/`), 20-cycle `chaos` suite (`internal/chaos` + `chaos/`), and the `franken` CLI (`keys init`, `sentinel serve`, `mcp serve|stdio|connect`, `wa-login`, `postmortem`, `chaos run`, `guard`).
-> - **Implemented Kiro Customization Stack (`.kiro/`):** Spec-driven development specs, multi-mode steering documents, 5 deterministic `v1` hooks (including `.kiro/hooks/preToolUse.json` running `franken guard --audit`), 3 MCP-only specialized agents (`franken-sentry`, `franken-architect`, `franken-remediator`), crons (`incident-sweep`, `morning-digest`), 3 skills (`linux-memory-forensics`, `remediation-runbooks`, `incident-spec-writer`), and `.kiro/settings/mcp.json`.
-> - **Planned Next Milestones:** Read-only **Haunted Lab** observability web dashboard and standalone Kiro Crew application packaging (`franken-crew-app`).
+> - **Implemented Kiro Customization Stack (`.kiro/` + `app.json`):** Spec-driven development specs, multi-mode steering documents, 5 `v1` hooks (including `.kiro/hooks/preToolUse.json` running `franken guard --audit` in the IDE/CLI), a `franken-conductor` orchestrator plus 3 MCP-only specialist agents (`franken-sentry`, `franken-architect`, `franken-remediator`), 3 skills (`linux-memory-forensics`, `remediation-runbooks`, `incident-spec-writer`), `.kiro/settings/mcp.json`, and a Kiro Crew app manifest (`app.json`) with a 15-minute safety-net sweep and a morning digest.
+> - **Planned Next Milestones:** Read-only **Haunted Lab** observability web dashboard and a Crew dashboard page.
+
+## Event-Driven Kiro Crew Flow
+
+Events drive the agents; the cron is only a safety net.
+
+1. Sentinel opens a P1/P2/POST_OOM incident and applies L1 reflexes. wa-bridge sends the first WhatsApp alert and posts `phase=TRIAGE` to the Kiro Crew webhook (`POST /api/hooks/agent`, `--crew-webhook-url`).
+2. `franken-conductor` (the only agent with `@kirocrew-core`) spawns `franken-sentry` (claim + triage), then `franken-architect` (`plan_submit`), then `franken-remediator` in `MODE=REQUEST_APPROVAL`, which asks wa-bridge for a native poll built from the stored plan.
+3. The human votes. wa-bridge mints one single-use Ed25519 token per step and posts `phase=EXECUTE`. The conductor spawns `franken-remediator` in `MODE=EXECUTE`, which runs each step with its own token and starts `verify_health`.
+4. Sentinel observes the 120 s recovery window in the background (slope and projected Time-To-OOM), resolves or escalates, and writes the postmortem. wa-bridge sends the final report on `verification.completed`.
+5. `incident-sweep` (every 900 s) runs the conductor's `phase=SWEEP` to catch anything a missed webhook left in `DETECTED`/`REFLEX_APPLIED`.
+
+Sentinel rejects any plan or execution whose target is outside the incident cgroup or that cites evidence it never recorded, so a prompt-injected plan cannot reach other services even if a human taps it.
 
 ## Two-Speed Self-Healing Architecture
 
@@ -16,7 +28,8 @@
 ## Non-Negotiable Safety Guardrails
 
 - **No Raw Shell Execution:** Fixed `exec.Command(binary, args...)` allowlist only; `sh -c` and `bash -c` are forbidden in both Sentinel and `franken guard`.
-- **Protected Infrastructure:** PID 1, kernel threads, `sshd`, `systemd-journald`, `systemd-logind`, `dbus`, `tailscaled`, `franken-sentinel`, `wa-bridge`, and `kiro-crew` are hard-blocked across policy, reflex, executor, MCP tools, and Kiro `PreToolUse` hooks.
+- **Protected Infrastructure:** PID 1, kernel threads, `sshd`/`ssh` (Debian/Ubuntu/Raspberry Pi OS unit name), networking units, `systemd-journald`, `systemd-logind`, `dbus`, `tailscaled`, `franken-sentinel`, `wa-bridge`/`franken-bridge`, and `kirocrew` are hard-blocked across policy, reflex, executor, MCP tools, and Kiro `PreToolUse` hooks.
+- **Incident Scope:** L1/L2 targets must live inside the incident cgroup, and every cited `evidence_id` must be recorded for that incident. Sentinel checks this at `plan_submit` and again right before `action_execute`.
 - **Secret Redaction at Source:** Bearer tokens, API keys (`sk-*`), passwords, JWTs, phone numbers/JIDs, and connection strings are redacted in memory before storage or SSE streaming.
 - **Private Control Plane Only:** Sentinel HTTP binds only to Tailscale CGNAT (`100.64.0.0/10` / `fd7a:115c:a1e0::/48`), loopback, or private interfaces with mandatory Bearer auth.
 
@@ -49,8 +62,7 @@ policy/                       # `actions.yaml` catalog & `plan.schema.json`
   steering/                   # `rules.md`, `product.md`, `tech.md`, `structure.md`, `linux-kernel.md`, `incident-response.md`
   specs/                      # Requirements, design, and task breakdown (`server-incident-remediation`)
   hooks/                      # Kiro v1 hooks (`policy-sync`, `executor-guard`, `redaction-test`, `preToolUse`, `spec-verify-on-stop`)
-  agents/                     # `franken-sentry.json`, `franken-architect.json`, `franken-remediator.json`
-  crons/                      # `incident-sweep.json` (`* * * * *`), `morning-digest.json` (`0 7 * * *`)
+  agents/                     # `franken-conductor.json`, `franken-sentry.json`, `franken-architect.json`, `franken-remediator.json`
   skills/                     # `linux-memory-forensics`, `remediation-runbooks`, `incident-spec-writer`
   settings/mcp.json           # MCP client profiles (`franken-sentinel`, `franken-wa`)
 ```
@@ -79,10 +91,11 @@ go run ./cmd/franken wa-login --db wa-bridge-session.db
 
 # Run Sentinel daemon on Linux host with Tailscale + Bearer auth
 export FRANKEN_BEARER_TOKEN="replace-with-strong-secret"
-go run ./cmd/franken sentinel serve --tailscale --port 8090 --db franken-sentinel.db
+go run ./cmd/franken sentinel serve --tailscale --port 8090 --db franken-sentinel.db --postmortem-dir incidents --rediscover-interval 10s
 
 # Run headless WhatsApp two-way bridge consuming Sentinel SSE + polls
-go run ./cmd/wa-bridge serve --sentinel http://100.64.0.10:8090 --admins +6281234567890 --priv-key keys/bridge-ed25519.key --wa-db wa-bridge-session.db
+export KIROCREW_TOKEN="$(kirocrew token)"   # webhook token for event-driven Crew phases
+go run ./cmd/wa-bridge serve --sentinel http://100.64.0.10:8090 --admins +6281234567890 --priv-key keys/bridge-ed25519.key --wa-db wa-bridge-session.db --crew-webhook-url http://127.0.0.1:5476/api/hooks/agent
 
 # Connect Kiro agents over stdio to a remote/local Sentinel Streamable HTTP server
 go run ./cmd/franken mcp connect sentinel@localhost --token-env FRANKEN_BEARER_TOKEN
@@ -98,7 +111,7 @@ go run ./cmd/franken postmortem --db franken-sentinel.db --incident INC-20261113
 
 - **Static `linux/arm64` Binary Sizes (`CGO_ENABLED=0`):** `franken` = `29,932,279 B` (~28.5 MiB), `wa-bridge` = `27,988,246 B` (~26.7 MiB).
 - **Sentinel Evaluation Benchmark (`BenchmarkSentinelEvalAndReflexFootprint`):** `35,421 ns/op` (~0.035 ms/cycle), `50,229 B/op`, `40 allocs/op` (measured on Intel Core i7-10750H dev host; live ARM64 board RSS target ≤ 32 MiB to be measured on hardware deploy).
-- **Chaos Verification (`franken chaos run --runs 20`):** `20/20 passed`, `0 failed`, `max_reflex_ms = 14.27 ms` (`avg = 3.44 ms`, within 250 ms L1 reflex SLA) across `memory_leak`, `memory_spike`, `fork_storm`, `zombie_storm`, and `log_flood`.
+- **Chaos Simulation (`franken chaos run --runs 20`):** `20/20 passed`, `0 failed`, `max_reflex_ms = 14.27 ms` (`avg = 3.44 ms`) across `memory_leak`, `memory_spike`, `fork_storm`, `zombie_storm`, and `log_flood`. This suite runs against an in-memory cgroup/procfs fixture with a fake command runner, so the timings measure Go evaluation and SQLite work, not kernel-to-reflex latency on hardware.
 - **systemd Sandboxing ([deploy/systemd/](deploy/systemd/)):** Both `franken-sentinel.service` and `franken-bridge.service` enforce `OOMScoreAdjust=-900`, `MemoryMax=48M`, `ProtectSystem=strict`, `NoNewPrivileges=yes`, `ProtectHome=yes`, `PrivateTmp=yes`, and strict `ReadWritePaths`.
 
 ## Documentation

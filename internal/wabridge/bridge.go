@@ -66,6 +66,15 @@ type Config struct {
 	PollTTL             time.Duration
 	Clock               func() time.Time
 	OnAudit             func(eventType, detail string)
+	// Crew memicu fase Kiro Crew (TRIAGE saat insiden dibuka, EXECUTE saat vote disetujui); nil = nonaktif
+	Crew CrewNotifier
+}
+
+// StepToken mengikat satu token Ed25519 sekali-pakai ke tepat satu langkah plan beserta aksinya.
+type StepToken struct {
+	StepID string `json:"step_id"`
+	Action string `json:"action"`
+	Token  string `json:"token"`
 }
 
 // PollOptionBinding memetakan satu opsi poll ke aksi beserta digest SHA-256-nya.
@@ -89,7 +98,9 @@ type ApprovalDecision struct {
 	PlanHash    string    `json:"plan_hash,omitempty"`
 	Action      string    `json:"action,omitempty"`
 	StepIDs     []string  `json:"step_ids,omitempty"`
-	ResultMsg   string    `json:"result_msg,omitempty"`
+	// StepTokens berisi satu token per langkah sesuai urutan plan; Token di atas sama dengan token langkah pertama
+	StepTokens []StepToken `json:"step_tokens,omitempty"`
+	ResultMsg  string      `json:"result_msg,omitempty"`
 	DecidedAt   time.Time `json:"decided_at"`
 }
 
@@ -130,7 +141,19 @@ type Bridge struct {
 	lastHeartbeatAt  time.Time
 	missedHeartbeats int
 	silentAlertSent  bool
+
+	// Dedupe pemicu fase Crew dan laporan akhir (dilindungi mu), serta pelacak goroutine pemicu Crew
+	crewSent *boundedSet
+	reported *boundedSet
+	crewWG   sync.WaitGroup
 }
+
+const (
+	// crewTriggerTimeout membatasi total waktu satu pemicu fase Crew termasuk retry.
+	crewTriggerTimeout = 60 * time.Second
+	// maxDedupeEntries membatasi jumlah kunci dedupe yang diingat bridge.
+	maxDedupeEntries = 512
+)
 
 // New membuat instance Bridge baru setelah memvalidasi konfigurasi keamanan inti.
 func New(cfg Config) (*Bridge, error) {
@@ -191,6 +214,8 @@ func New(cfg Config) (*Bridge, error) {
 		pollsByInc:      make(map[string]*PendingPoll),
 		pollOptionPool:  make(map[string]PollOptionBinding),
 		lastHeartbeatAt: now,
+		crewSent:        newBoundedSet(maxDedupeEntries),
+		reported:        newBoundedSet(maxDedupeEntries),
 	}, nil
 }
 
@@ -240,6 +265,8 @@ func (b *Bridge) Run(ctx context.Context) error {
 
 	<-runCtx.Done()
 	wg.Wait()
+	// Tunggu pemicu Crew yang sedang berjalan agar tidak ada goroutine yang tertinggal saat shutdown
+	b.crewWG.Wait()
 	return nil
 }
 
@@ -328,6 +355,10 @@ func (b *Bridge) HandleSSEEvent(ctx context.Context, ev mcpserver.StreamEvent) {
 		b.mu.Unlock()
 	}
 
+	if ev.Type == "verification.completed" {
+		b.sendFinalReport(ctx, ev)
+		return
+	}
 	if ev.Type != "incident.opened" && ev.Type != "incident.escalated_severity" {
 		return
 	}
@@ -347,12 +378,111 @@ func (b *Bridge) HandleSSEEvent(ctx context.Context, ev mcpserver.StreamEvent) {
 	}
 
 	// Kirim notifikasi insiden kritis pertama secepat mungkin (< 2 detik) tanpa membuat poll otonom
-	firstAlert := formatCriticalAlertMessage(b.cfg.NodeName, ev)
+	firstAlert := formatCriticalAlertMessage(b.nodeName(), ev)
 	if _, err := b.sendRateLimitedText(ctx, ev.IncidentID, b.targetJID, firstAlert); err != nil {
 		b.audit("FIRST_ALERT_ERROR", fmt.Sprintf("incident=%s err=%v", ev.IncidentID, err))
+	} else {
+		b.audit("FIRST_ALERT_SENT", fmt.Sprintf("incident=%s severity=%s", ev.IncidentID, ev.Severity))
+	}
+
+	// Mulai fase TRIAGE di Kiro Crew secara event-driven (cron 15 menit hanya jaring pengaman)
+	b.triggerCrew(ctx, CrewPhaseRequest{
+		Phase:      CrewPhaseTriage,
+		IncidentID: ev.IncidentID,
+		Severity:   ev.Severity,
+		Node:       b.nodeName(),
+		Cgroup:     extractAnyString(ev.Data, "cgroup"),
+	})
+}
+
+// triggerCrew memicu satu fase Kiro Crew secara asinkron, paling banyak sekali per insiden+fase+approval.
+func (b *Bridge) triggerCrew(ctx context.Context, req CrewPhaseRequest) {
+	if b.cfg.Crew == nil {
 		return
 	}
-	b.audit("FIRST_ALERT_SENT", fmt.Sprintf("incident=%s severity=%s", ev.IncidentID, ev.Severity))
+	key := strings.Join([]string{req.IncidentID, string(req.Phase), req.ApprovalID}, "|")
+	b.mu.Lock()
+	fresh := b.crewSent.add(key)
+	b.mu.Unlock()
+	if !fresh {
+		return
+	}
+
+	b.crewWG.Add(1)
+	go func() {
+		defer b.crewWG.Done()
+		// Lepaskan dari pembatalan pemanggil (mis. selesainya handler SSE) namun tetap dibatasi waktu
+		tctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), crewTriggerTimeout)
+		defer cancel()
+		if err := b.cfg.Crew.Trigger(tctx, req); err != nil {
+			b.audit("CREW_TRIGGER_FAILED", fmt.Sprintf("incident=%s phase=%s err=%v", req.IncidentID, req.Phase, err))
+			return
+		}
+		b.audit("CREW_TRIGGERED", fmt.Sprintf("incident=%s phase=%s approval=%s", req.IncidentID, req.Phase, req.ApprovalID))
+	}()
+}
+
+// sendFinalReport mengirim laporan akhir deterministik sekali per insiden saat verifikasi forward selesai.
+func (b *Bridge) sendFinalReport(ctx context.Context, ev mcpserver.StreamEvent) {
+	incID := strings.TrimSpace(ev.IncidentID)
+	if incID == "" {
+		return
+	}
+	b.mu.Lock()
+	fresh := b.reported.add(incID)
+	b.mu.Unlock()
+	if !fresh {
+		return
+	}
+
+	status := extractAnyString(ev.Data, "status")
+	lines := []string{fmt.Sprintf("[REPORT] *%s* %s (verification %s)", incID, ev.State, status)}
+	if rolled, ok := ev.Data["rolled_back"]; ok {
+		lines = append(lines, fmt.Sprintf("L1 reflexes rolled back: %v", rolled))
+	}
+	if reasons := extractAnyString(ev.Data, "failure_reasons"); reasons != "" {
+		lines = append(lines, "Reasons: "+reasons)
+	}
+	if pm := extractAnyString(ev.Data, "postmortem_path"); pm != "" {
+		lines = append(lines, "Postmortem: "+pm)
+	}
+	if _, err := b.sendRateLimitedText(ctx, incID, b.targetJID, strings.Join(lines, "\n")); err != nil {
+		b.audit("FINAL_REPORT_ERROR", fmt.Sprintf("incident=%s err=%v", incID, err))
+		return
+	}
+	b.audit("FINAL_REPORT_SENT", fmt.Sprintf("incident=%s state=%s", incID, ev.State))
+}
+
+func (b *Bridge) nodeName() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.cfg.NodeName
+}
+
+// boundedSet mengingat kunci terbaru dengan kapasitas tetap agar map dedupe tidak tumbuh tanpa batas.
+type boundedSet struct {
+	limit int
+	order []string
+	seen  map[string]struct{}
+}
+
+func newBoundedSet(limit int) *boundedSet {
+	return &boundedSet{limit: limit, seen: make(map[string]struct{}, limit)}
+}
+
+// add mengembalikan true bila kunci baru; kunci tertua dibuang saat kapasitas penuh.
+func (s *boundedSet) add(key string) bool {
+	if _, ok := s.seen[key]; ok {
+		return false
+	}
+	if len(s.order) >= s.limit {
+		oldest := s.order[0]
+		s.order = s.order[1:]
+		delete(s.seen, oldest)
+	}
+	s.order = append(s.order, key)
+	s.seen[key] = struct{}{}
+	return true
 }
 
 // PollRequest berisi parameter untuk mengirim Native WhatsApp Poll persetujuan atas plan Kiro Crew yang tersimpan di Sentinel.
@@ -406,9 +536,12 @@ func (b *Bridge) SendApprovalPoll(ctx context.Context, req PollRequest) (*Pendin
 		return nil, fmt.Errorf("wabridge: stored plan incident_id %q does not match %q", plan.IncidentID, incID)
 	}
 
-	canonicalHash, err := policy.ComputePlanHash(&plan)
-	if err != nil {
-		return nil, fmt.Errorf("wabridge: compute canonical plan_hash: %w", err)
+	// Utamakan plan_hash dari Sentinel (dihitung dari plan asli sebelum redaksi); hitung sendiri hanya untuk Sentinel lama
+	canonicalHash := strings.TrimSpace(incOut.PlanHash)
+	if canonicalHash == "" {
+		if canonicalHash, err = policy.ComputePlanHash(&plan); err != nil {
+			return nil, fmt.Errorf("wabridge: compute canonical plan_hash: %w", err)
+		}
 	}
 	if len(reqHash) != len(canonicalHash) || subtle.ConstantTimeCompare([]byte(reqHash), []byte(canonicalHash)) != 1 {
 		b.audit("POLL_PLAN_HASH_MISMATCH", fmt.Sprintf("incident=%s requested=%s stored=%s", incID, shortHash(reqHash), shortHash(canonicalHash)))
@@ -713,9 +846,10 @@ func (b *Bridge) processPollSelection(ctx context.Context, poll *PendingPoll, ch
 	decision.Approver = approverSender
 	decision.DecidedAt = now
 
+	var executeReq *CrewPhaseRequest
 	switch choice.Kind {
 	case "approve":
-		token, planHash, optionID, actName, stepIDs, summary, err := b.approveAndMintToken(ctx, poll, choice, approverSender)
+		minted, err := b.approveAndMintToken(ctx, poll, choice, approverSender)
 		if err != nil {
 			decision.Status = "DENIED"
 			decision.ResultMsg = redact.String(err.Error())
@@ -723,13 +857,24 @@ func (b *Bridge) processPollSelection(ctx context.Context, poll *PendingPoll, ch
 				fmt.Sprintf("Approval rejected for *%s* (%s): %s", choice.Label, poll.IncidentID, decision.ResultMsg))
 		} else {
 			decision.Status = "GRANTED"
-			decision.OptionID = optionID
-			decision.Token = token
-			decision.PlanHash = planHash
-			decision.Action = actName
-			decision.StepIDs = stepIDs
-			decision.ResultMsg = summary
-			_, _ = b.sendRateLimitedText(ctx, poll.IncidentID, b.targetJID, summary)
+			decision.OptionID = minted.OptionID
+			decision.PlanHash = minted.PlanHash
+			decision.StepIDs = minted.StepIDs
+			decision.StepTokens = minted.StepTokens
+			// Field lama tetap diisi dengan langkah pertama agar klien yang belum mengenal step_tokens tetap berfungsi
+			decision.Token = minted.StepTokens[0].Token
+			decision.Action = minted.StepTokens[0].Action
+			decision.ResultMsg = minted.Summary
+			_, _ = b.sendRateLimitedText(ctx, poll.IncidentID, b.targetJID, minted.Summary)
+			executeReq = &CrewPhaseRequest{
+				Phase:      CrewPhaseExecute,
+				IncidentID: poll.IncidentID,
+				Node:       b.nodeName(),
+				Cgroup:     poll.Cgroup,
+				ApprovalID: poll.ApprovalID,
+				OptionID:   minted.OptionID,
+				StepIDs:    minted.StepIDs,
+			}
 		}
 
 	case "rollback":
@@ -759,44 +904,52 @@ func (b *Bridge) processPollSelection(ctx context.Context, poll *PendingPoll, ch
 	}
 
 	b.resolvePoll(poll, decision)
+
+	// Picu fase EXECUTE setelah keputusan tersimpan, sehingga wa_await_decision milik Remediator langsung kembali
+	if executeReq != nil {
+		b.triggerCrew(ctx, *executeReq)
+	}
 }
 
 // approveAndMintToken memverifikasi plan Sentinel saat vote masuk dan mencetak token Ed25519 tepat untuk opsi terpilih.
 // Bridge hanya menandatangani token dan mengembalikannya ke Kiro Crew, tanpa pernah mengeksekusi aksi L2 secara langsung (Temuan C1 & C2).
-func (b *Bridge) approveAndMintToken(ctx context.Context, poll *PendingPoll, choice PollOptionBinding, approverSender string) (string, string, string, string, []string, string, error) {
+func (b *Bridge) approveAndMintToken(ctx context.Context, poll *PendingPoll, choice PollOptionBinding, approverSender string) (*mintedApproval, error) {
 	if strings.TrimSpace(poll.PlanHash) == "" {
-		return "", "", "", "", nil, "", errors.New("poll missing canonical plan_hash")
+		return nil, errors.New("poll missing canonical plan_hash")
 	}
 	if strings.TrimSpace(choice.OptionID) == "" || len(choice.Steps) == 0 {
-		return "", "", "", "", nil, "", errors.New("chosen poll option has no bound option_id or steps")
+		return nil, errors.New("chosen poll option has no bound option_id or steps")
 	}
 
 	incOut, err := b.cfg.Sentinel.IncidentGet(ctx, poll.IncidentID)
 	if err != nil {
-		return "", "", "", "", nil, "", fmt.Errorf("fetch incident %s: %w", poll.IncidentID, err)
+		return nil, fmt.Errorf("fetch incident %s: %w", poll.IncidentID, err)
 	}
 	if incOut == nil {
-		return "", "", "", "", nil, "", fmt.Errorf("sentinel returned nil incident for %s", poll.IncidentID)
+		return nil, fmt.Errorf("sentinel returned nil incident for %s", poll.IncidentID)
 	}
 	if isTerminalIncidentState(incOut.Incident.State) {
-		return "", "", "", "", nil, "", fmt.Errorf("incident %s is already terminal (%s)", poll.IncidentID, incOut.Incident.State)
+		return nil, fmt.Errorf("incident %s is already terminal (%s)", poll.IncidentID, incOut.Incident.State)
 	}
 	if strings.TrimSpace(incOut.Incident.PlanJSON) == "" {
-		return "", "", "", "", nil, "", fmt.Errorf("incident %s has no validated plan stored in Sentinel", poll.IncidentID)
+		return nil, fmt.Errorf("incident %s has no validated plan stored in Sentinel", poll.IncidentID)
 	}
 
 	var storedPlan policy.Plan
 	if err := json.Unmarshal([]byte(incOut.Incident.PlanJSON), &storedPlan); err != nil {
-		return "", "", "", "", nil, "", fmt.Errorf("decode stored plan_json: %w", err)
+		return nil, fmt.Errorf("decode stored plan_json: %w", err)
 	}
-	currentPlanHash, err := policy.ComputePlanHash(&storedPlan)
-	if err != nil {
-		return "", "", "", "", nil, "", fmt.Errorf("compute canonical plan_hash: %w", err)
+	// Utamakan plan_hash dari Sentinel (dihitung dari plan asli sebelum redaksi); hitung sendiri hanya untuk Sentinel lama
+	currentPlanHash := strings.TrimSpace(incOut.PlanHash)
+	if currentPlanHash == "" {
+		if currentPlanHash, err = policy.ComputePlanHash(&storedPlan); err != nil {
+			return nil, fmt.Errorf("compute canonical plan_hash: %w", err)
+		}
 	}
 	// Tolak suara bila plan pada Sentinel berubah sejak poll dikirimkan ke admin
 	if len(currentPlanHash) != len(poll.PlanHash) || subtle.ConstantTimeCompare([]byte(currentPlanHash), []byte(poll.PlanHash)) != 1 {
 		b.audit("VOTE_PLAN_HASH_MISMATCH", fmt.Sprintf("incident=%s poll_hash=%s stored_hash=%s", poll.IncidentID, shortHash(poll.PlanHash), shortHash(currentPlanHash)))
-		return "", "", "", "", nil, "", ErrPlanHashMismatch
+		return nil, ErrPlanHashMismatch
 	}
 
 	// Wajib mencari opsi persis berdasarkan `opt.ID == choice.OptionID` tanpa fallback ke opsi pertama (Temuan C2)
@@ -808,20 +961,20 @@ func (b *Bridge) approveAndMintToken(ctx context.Context, poll *PendingPoll, cho
 		}
 	}
 	if matchedOpt == nil || len(matchedOpt.Steps) == 0 {
-		return "", "", "", "", nil, "", fmt.Errorf("selected option %q not found or empty in stored plan", choice.OptionID)
+		return nil, fmt.Errorf("selected option %q not found or empty in stored plan", choice.OptionID)
 	}
 
 	// Verifikasi langkah pada plan tersimpan identik dengan langkah yang ditampilkan saat poll dibuat
 	choiceStepsCanon, err := policy.CanonicalJSON(choice.Steps)
 	if err != nil {
-		return "", "", "", "", nil, "", fmt.Errorf("canonicalize poll choice steps: %w", err)
+		return nil, fmt.Errorf("canonicalize poll choice steps: %w", err)
 	}
 	storedStepsCanon, err := policy.CanonicalJSON(matchedOpt.Steps)
 	if err != nil {
-		return "", "", "", "", nil, "", fmt.Errorf("canonicalize stored option steps: %w", err)
+		return nil, fmt.Errorf("canonicalize stored option steps: %w", err)
 	}
 	if !bytes.Equal(choiceStepsCanon, storedStepsCanon) {
-		return "", "", "", "", nil, "", fmt.Errorf("option %s steps differ from poll snapshot", matchedOpt.ID)
+		return nil, fmt.Errorf("option %s steps differ from poll snapshot", matchedOpt.ID)
 	}
 
 	// Pastikan insiden berada pada WAITING_APPROVAL sebelum menyerahkan token ke Franken-Remediator
@@ -833,34 +986,51 @@ func (b *Bridge) approveAndMintToken(ctx context.Context, poll *PendingPoll, cho
 			Reason:     fmt.Sprintf("WhatsApp approval granted for option %s", matchedOpt.ID),
 			Actor:      "wa-bridge",
 		}); tErr != nil {
-			return "", "", "", "", nil, "", fmt.Errorf("transition to WAITING_APPROVAL: %w", tErr)
+			return nil, fmt.Errorf("transition to WAITING_APPROVAL: %w", tErr)
 		}
 	}
 
-	primaryStep := matchedOpt.Steps[0]
+	// Cetak satu token sekali-pakai per langkah: setiap token mengikat tepat satu step_id dan aksinya sendiri,
+	// sehingga opsi dua langkah (mis. L1 + L2, atau dua aksi L2 berbeda) bisa dieksekusi berurutan tanpa replay
 	stepIDs := make([]string, 0, len(matchedOpt.Steps))
+	stepTokens := make([]StepToken, 0, len(matchedOpt.Steps))
 	for _, st := range matchedOpt.Steps {
+		tok, _, mintErr := b.cfg.Minter.Mint(approval.MintRequest{
+			IncidentID:     poll.IncidentID,
+			PlanHash:       currentPlanHash,
+			OptionID:       matchedOpt.ID,
+			ActionName:     st.Action,
+			StepIDs:        []string{st.ID},
+			ApproverSender: approverSender,
+		})
+		if mintErr != nil {
+			return nil, fmt.Errorf("mint approval token for step %s: %w", st.ID, mintErr)
+		}
 		stepIDs = append(stepIDs, st.ID)
+		stepTokens = append(stepTokens, StepToken{StepID: st.ID, Action: st.Action, Token: tok})
 	}
 
-	tok, _, mintErr := b.cfg.Minter.Mint(approval.MintRequest{
-		IncidentID:     poll.IncidentID,
-		PlanHash:       currentPlanHash,
-		OptionID:       matchedOpt.ID,
-		ActionName:     primaryStep.Action,
-		StepIDs:        stepIDs,
-		ApproverSender: approverSender,
-	})
-	if mintErr != nil {
-		return "", "", "", "", nil, "", fmt.Errorf("mint approval token: %w", mintErr)
-	}
+	b.audit("APPROVAL_TOKEN_MINTED", fmt.Sprintf("incident=%s option=%s steps=%v tokens=%d plan=%s",
+		poll.IncidentID, matchedOpt.ID, stepIDs, len(stepTokens), shortHash(currentPlanHash)))
 
-	b.audit("APPROVAL_TOKEN_MINTED", fmt.Sprintf("incident=%s option=%s action=%s steps=%v plan=%s",
-		poll.IncidentID, matchedOpt.ID, primaryStep.Action, stepIDs, shortHash(currentPlanHash)))
+	summary := fmt.Sprintf("Approved option %s (%s) for %s [plan %s]; %d single-use Ed25519 step token(s) issued to Franken-Remediator.",
+		matchedOpt.ID, formatStepsSummary(matchedOpt.Steps), poll.IncidentID, shortHash(currentPlanHash), len(stepTokens))
+	return &mintedApproval{
+		PlanHash:   currentPlanHash,
+		OptionID:   matchedOpt.ID,
+		StepIDs:    stepIDs,
+		StepTokens: stepTokens,
+		Summary:    summary,
+	}, nil
+}
 
-	summary := fmt.Sprintf("Approved option %s (%s) for %s [plan %s]; Ed25519 token issued to Franken-Remediator.",
-		matchedOpt.ID, formatStepsSummary(matchedOpt.Steps), poll.IncidentID, shortHash(currentPlanHash))
-	return tok, currentPlanHash, matchedOpt.ID, primaryStep.Action, stepIDs, summary, nil
+// mintedApproval merangkum hasil persetujuan yang sudah ditandatangani untuk satu opsi poll.
+type mintedApproval struct {
+	PlanHash   string
+	OptionID   string
+	StepIDs    []string
+	StepTokens []StepToken
+	Summary    string
 }
 
 func (b *Bridge) rollbackIncidentReflexes(ctx context.Context, incidentID string) (int, error) {
@@ -1102,6 +1272,10 @@ func formatStepTarget(st policy.PlanStep) string {
 		return action + " " + strings.TrimSpace(unit)
 	}
 	if app, ok := st.Params["app"].(string); ok && strings.TrimSpace(app) != "" {
+		// Tampilkan worker PM2 yang akan di-restart agar manusia tahu persis instans mana yang disetujui
+		if pmID, ok := st.Params["pm_id"]; ok && pmID != nil {
+			return fmt.Sprintf("%s %s pm_id=%v", action, strings.TrimSpace(app), pmID)
+		}
 		return action + " " + strings.TrimSpace(app)
 	}
 	if pidVal, ok := st.Params["pid"]; ok && pidVal != nil {
