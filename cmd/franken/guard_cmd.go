@@ -21,8 +21,28 @@ const maxGuardPayloadBytes = 1 << 20
 var defaultProtectedUnits = map[string]struct{}{
 	"init":                     {},
 	"systemd":                  {},
+	"ssh":                      {},
+	"ssh.service":              {},
+	"ssh.socket":               {},
 	"sshd":                     {},
 	"sshd.service":             {},
+	"sshd.socket":              {},
+	"systemd-networkd":         {},
+	"systemd-networkd.service": {},
+	"networkmanager":           {},
+	"networkmanager.service":   {},
+	"systemd-resolved":         {},
+	"systemd-resolved.service": {},
+	"wpa_supplicant":           {},
+	"wpa_supplicant.service":   {},
+	"networking":               {},
+	"networking.service":       {},
+	"dhcpcd":                   {},
+	"dhcpcd.service":           {},
+	"franken-bridge":           {},
+	"franken-bridge.service":   {},
+	"kirocrew":                 {},
+	"kirocrew.service":         {},
 	"systemd-journald":         {},
 	"systemd-journald.service": {},
 	"systemd-logind":           {},
@@ -242,6 +262,14 @@ func evaluateGuardPayload(raw string, cat *policy.Catalog) (guardDecision, strin
 		dec.Allowed = false
 		dec.Reason = reason
 		return dec, incidentID, nil
+	}
+	// action_execute membawa target di dalam objek `params`, jadi periksa juga tingkat bersarang tersebut
+	if paramsMap, ok := inputMap["params"].(map[string]any); ok {
+		if reason := checkProtectedTargetsInMap(paramsMap, cat); reason != "" {
+			dec.Allowed = false
+			dec.Reason = "params: " + reason
+			return dec, incidentID, nil
+		}
 	}
 
 	// 4. Periksa langkah-langkah rencana apabila payload adalah plan_submit atau memuat daftar steps
