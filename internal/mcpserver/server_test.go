@@ -1603,3 +1603,75 @@ func TestMCP_C4_ProcessTerminateEscalatesSIGTERMToSIGKILL(t *testing.T) {
 		}
 	})
 }
+
+func TestMCP_ProcessTerminateBlocksDynamicProtectedPID(t *testing.T) {
+	h := setupTestMCPHarness(t)
+	defer h.srv.Close()
+
+	// Simulasikan proses penting (sshd & tailscaled) pada /proc agar perlindungan dinamis aktif
+	h.fs.SetFile("/proc/4321/stat", "4321 (sshd) S 1 4321 4321 0 -1 4194560 0 0 0 0\n")
+	h.fs.SetFile("/proc/4321/cmdline", "/usr/sbin/sshd\x00-D\x00")
+	h.fs.SetFile("/proc/4322/stat", "4322 (systemd-journal) S 1 4322 4322 0 -1 4194560 0 0 0 0\n")
+	h.fs.SetFile("/proc/4322/cmdline", "/lib/systemd/systemd-journald\x00")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	for _, tc := range []struct {
+		name string
+		pid  int
+	}{
+		{name: "sshd_pid", pid: 4321},
+		{name: "truncated_journald_pid", pid: 4322},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			incID := "INC-20261113-1300-" + tc.name
+			plan := policy.Plan{
+				IncidentID:         incID,
+				SuspectedRootCause: "Attempted terminate on protected infrastructure pid",
+				HumanFollowUp:      []string{"None"},
+				Options: []policy.PlanOption{{
+					ID:    "A",
+					Label: "Unsafe terminate",
+					Steps: []policy.PlanStep{{
+						ID:             "step-prot",
+						Action:         "process_terminate",
+						Params:         map[string]any{"pid": tc.pid},
+						EvidenceIDs:    []string{"ev-seed1"},
+						ExpectedEffect: "Must be blocked",
+					}},
+				}},
+			}
+			planBytes, _ := json.Marshal(plan)
+			planHash, _ := policy.ComputePlanHash(&plan)
+
+			_ = h.store.CreateIncident(ctx, &incident.Incident{
+				ID: incID, Node: "pi01", Cgroup: "/franken.slice/haunted-api.service",
+				Severity: "P1", State: incident.StatePlanned, PlanJSON: string(planBytes),
+			})
+			tok, _, err := h.minter.Mint(approval.MintRequest{
+				IncidentID: incID, PlanHash: planHash, OptionID: "A", ActionName: "process_terminate", StepIDs: []string{"step-prot"}, ApproverSender: "+62811112222",
+			})
+			if err != nil {
+				t.Fatalf("Mint process_terminate: %v", err)
+			}
+
+			session, cleanup := connectPipeMCPClient(t, ctx, h.srv)
+			defer cleanup()
+
+			res, err := session.CallTool(ctx, &mcp.CallToolParams{
+				Name: "action_execute",
+				Arguments: map[string]any{
+					"incident_id": incID, "step_id": "step-prot", "action": "process_terminate",
+					"params": map[string]any{"pid": tc.pid}, "approval_token": tok,
+				},
+			})
+			if err != nil {
+				t.Fatalf("CallTool failed unexpectedly: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("expected IsError=true when targeting protected pid %d", tc.pid)
+			}
+		})
+	}
+}

@@ -487,7 +487,14 @@ func collectProcessTree(fsys kernelfs.FS, procRoot, absCgroupDir string, cat *po
 		rssBytes := readProcVmRSS(fsys, procRoot, pidStr)
 		protected := false
 		if cat != nil {
-			protected = cat.IsProtectedPID(st.PID)
+			protected = cat.IsProtectedPIDWithReader(st.PID, func(p string) ([]byte, error) {
+				// Petakan awalan /proc/ ke procRoot konfigurasi agar inspeksi berjalan di OS maupun MemFS.
+				mapped := p
+				if procRoot != "" && procRoot != "/proc" && strings.HasPrefix(p, "/proc/") {
+					mapped = kernelfs.JoinPath(procRoot, strings.TrimPrefix(p, "/proc/"))
+				}
+				return fsys.ReadFile(mapped)
+			})
 		}
 
 		nodes = append(nodes, ProcessNode{

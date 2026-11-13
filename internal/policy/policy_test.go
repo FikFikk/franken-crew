@@ -1,6 +1,8 @@
 package policy
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -28,6 +30,9 @@ func TestPolicy_LoadCatalogAndProtectedUnits(t *testing.T) {
 	// 2. Verifikasi PID yang dilindungi
 	if !cat.IsProtectedPID(1) {
 		t.Errorf("PID 1 must be strictly protected")
+	}
+	if !cat.IsProtectedPID(os.Getpid()) {
+		t.Errorf("current running Sentinel/process PID (%d) must be protected", os.Getpid())
 	}
 	if cat.IsProtectedPID(9999) {
 		t.Errorf("arbitrary user PID should not be protected")
@@ -281,4 +286,71 @@ func TestPolicy_Property_P1_NoL3OrProtectedTargetEverValidates(t *testing.T) {
 			rt.Fatalf("invariant violated: plan with isL3=%v isProtected=%v validated as true!", isL3, isProtected)
 		}
 	})
+}
+
+func TestPolicy_IsProtectedPID_DynamicProcInspection(t *testing.T) {
+	catalogPath := filepath.Join("..", "..", "policy", "actions.yaml")
+	cat, err := LoadCatalog(catalogPath)
+	if err != nil {
+		t.Fatalf("LoadCatalog: %v", err)
+	}
+
+	procFiles := map[string][]byte{
+		"/proc/1050/stat":    []byte("1050 (sshd) S 1 1050 1050 0"),
+		"/proc/1050/cmdline": []byte("/usr/sbin/sshd\x00-D\x00"),
+		"/proc/1051/stat":    []byte("1051 (sshd) S 1050 1051 1051 0"),
+		"/proc/1051/cmdline": []byte("sshd: root@pts/0\x00"),
+		// Linux memotong comm di /proc/<pid>/stat menjadi 15 karakter: "systemd-journal"
+		"/proc/410/stat":     []byte("410 (systemd-journal) S 1 410 410 0"),
+		"/proc/410/cmdline":  []byte("/lib/systemd/systemd-journald\x00"),
+		"/proc/520/stat":     []byte("520 (tailscaled) S 1 520 520 0"),
+		"/proc/520/cmdline":  []byte("/usr/sbin/tailscaled\x00--state=/var/lib/tailscale/tailscaled.state\x00"),
+		"/proc/610/stat":     []byte("610 (franken-sentine) S 1 610 610 0"),
+		"/proc/610/cmdline":  []byte("/usr/local/bin/franken\x00sentinel\x00serve\x00"),
+		"/proc/700/stat":     []byte("700 (kworker/u8:2) I 2 0 0 0"),
+		"/proc/700/cmdline":  []byte(""),
+		// Pekerja aplikasi normal tidak boleh terkena false positive hanya karena argumen CLI menyebut tailscaled
+		"/proc/2048/stat":    []byte("2048 (node) S 100 2048 2048 0"),
+		"/proc/2048/cmdline": []byte("/usr/bin/node\x00/opt/haunted-api/server.js\x00--upstream=tailscaled\x00"),
+	}
+	reader := func(p string) ([]byte, error) {
+		data, ok := procFiles[p]
+		if !ok {
+			return nil, fmt.Errorf("enoent: %s", p)
+		}
+		return data, nil
+	}
+
+	protectedPIDs := []int{0, 1, 2, 1050, 1051, 410, 520, 610, 700}
+	for _, pid := range protectedPIDs {
+		if !cat.IsProtectedPIDWithReader(pid, reader) {
+			t.Errorf("expected PID %d to be protected dynamically via /proc inspection", pid)
+		}
+	}
+
+	if cat.IsProtectedPIDWithReader(2048, reader) {
+		t.Errorf("expected normal application worker PID 2048 not to be protected")
+	}
+
+	// Validasi rencana process_terminate memakai /proc riil tetap menolak PID daemon berjalan sendiri
+	plan := &Plan{
+		IncidentID: "INC-SELF-01",
+		Options: []PlanOption{{
+			ID:    "A",
+			Label: "Terminate self",
+			Steps: []PlanStep{{
+				ID:          "s1",
+				Action:      "process_terminate",
+				Params:      map[string]any{"pid": os.Getpid()},
+				EvidenceIDs: []string{"EVID-1"},
+			}},
+		}},
+	}
+	res, err := cat.ValidatePlan(plan)
+	if err != nil {
+		t.Fatalf("ValidatePlan: %v", err)
+	}
+	if res.Valid {
+		t.Fatalf("expected ValidatePlan to reject process_terminate targeting current Sentinel PID")
+	}
 }

@@ -101,7 +101,7 @@ func TestStore_EvidenceRedactionPipeline(t *testing.T) {
 		t.Fatalf("failed creating incident: %v", err)
 	}
 
-	rawLog := "Crash report: failed connecting to postgres://root:superSecretDBPass@10.0.0.12:5432/db with token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+	rawLog := "Crash report: failed connecting to postgres://root:superSecretDBPass@10.0.0.12:5432/db using key sk-proj-1234567890abcdefghijklmnop phone=0812-3456-7890 bytes=1073741824 jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
 	snapshot := &EvidenceSnapshot{
 		ID:         "EVID-001",
 		IncidentID: inc.ID,
@@ -109,7 +109,7 @@ func TestStore_EvidenceRedactionPipeline(t *testing.T) {
 		RawData:    rawLog,
 	}
 
-	// Simpan snapshot bukti; sensor otomatis harus aktif
+	// Simpan snapshot bukti; sensor otomatis harus aktif pada RawData maupun RedactedData
 	if err := store.SaveEvidence(ctx, snapshot); err != nil {
 		t.Fatalf("failed to save evidence: %v", err)
 	}
@@ -122,15 +122,25 @@ func TestStore_EvidenceRedactionPipeline(t *testing.T) {
 		t.Fatalf("expected 1 evidence item, got %d", len(evList))
 	}
 
-	redacted := evList[0].RedactedData
-	if strings.Contains(redacted, "superSecretDBPass") {
-		t.Errorf("raw database password was not redacted: %s", redacted)
-	}
-	if strings.Contains(redacted, "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9") {
-		t.Errorf("JWT token was not redacted: %s", redacted)
-	}
-	if !strings.Contains(redacted, "[REDACTED_PASSWORD]") || !strings.Contains(redacted, "[REDACTED_JWT]") {
-		t.Errorf("expected redacted markers in output: %s", redacted)
+	for _, stored := range []string{evList[0].RawData, evList[0].RedactedData} {
+		if strings.Contains(stored, "superSecretDBPass") {
+			t.Errorf("raw database password was not redacted: %s", stored)
+		}
+		if strings.Contains(stored, "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9") {
+			t.Errorf("JWT token was not redacted: %s", stored)
+		}
+		if strings.Contains(stored, "sk-proj-1234567890") {
+			t.Errorf("sk- token was not redacted: %s", stored)
+		}
+		if strings.Contains(stored, "0812-3456-7890") {
+			t.Errorf("Indonesian phone was not redacted: %s", stored)
+		}
+		if !strings.Contains(stored, "1073741824") {
+			t.Errorf("metric bytes should stay unredacted: %s", stored)
+		}
+		if !strings.Contains(stored, "[REDACTED_PASSWORD]") || !strings.Contains(stored, "[REDACTED_JWT]") || !strings.Contains(stored, "[REDACTED_TOKEN]") || !strings.Contains(stored, "[REDACTED_PHONE]") {
+			t.Errorf("expected redacted markers in output: %s", stored)
+		}
 	}
 }
 

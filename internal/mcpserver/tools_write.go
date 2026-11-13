@@ -1007,6 +1007,20 @@ func (s *Server) handlePostmortemGenerate(ctx context.Context, _ *mcp.CallToolRe
 	}, nil
 }
 
+func (s *Server) isProtectedPID(pid int) bool {
+	if pid <= 1 || pid == 2 {
+		return true
+	}
+	if s.cfg.Catalog == nil {
+		return false
+	}
+	var readFn func(string) ([]byte, error)
+	if s.cfg.FS != nil {
+		readFn = s.cfg.FS.ReadFile
+	}
+	return s.cfg.Catalog.IsProtectedPIDWithReader(pid, readFn)
+}
+
 func (s *Server) checkProtectedParams(actionName string, params map[string]any) error {
 	if s.cfg.Catalog == nil {
 		return errors.New("policy catalog is not configured")
@@ -1018,12 +1032,12 @@ func (s *Server) checkProtectedParams(actionName string, params map[string]any) 
 		return fmt.Errorf("%w: app/unit %s", policy.ErrProtectedTarget, app)
 	}
 	if pid, ok := extractPositiveInt(params, "pid"); ok {
-		if pid <= 1 || s.cfg.Catalog.IsProtectedPID(pid) {
+		if s.isProtectedPID(pid) {
 			return fmt.Errorf("%w: pid %d", policy.ErrProtectedTarget, pid)
 		}
 	}
 	if ppid, ok := extractPositiveInt(params, "parent_pid"); ok {
-		if ppid <= 1 || s.cfg.Catalog.IsProtectedPID(ppid) {
+		if s.isProtectedPID(ppid) {
 			return fmt.Errorf("%w: parent_pid %d", policy.ErrProtectedTarget, ppid)
 		}
 	}
@@ -1201,7 +1215,7 @@ func (s *Server) buildL2Command(actionName string, params map[string]any, cat *p
 		if !ok || pid <= 1 {
 			return "", nil, 0, errors.New("valid pid > 1 is required")
 		}
-		if cat != nil && cat.IsProtectedPID(pid) {
+		if s.isProtectedPID(pid) || (cat != nil && cat.IsProtectedPID(pid)) {
 			return "", nil, 0, fmt.Errorf("%w: pid %d", policy.ErrProtectedTarget, pid)
 		}
 		return "kill", []string{"-TERM", strconv.Itoa(pid)}, 10 * time.Second, nil
@@ -1211,7 +1225,7 @@ func (s *Server) buildL2Command(actionName string, params map[string]any, cat *p
 		if !ok || ppid <= 1 {
 			return "", nil, 0, errors.New("valid parent_pid > 1 is required")
 		}
-		if cat != nil && cat.IsProtectedPID(ppid) {
+		if s.isProtectedPID(ppid) || (cat != nil && cat.IsProtectedPID(ppid)) {
 			return "", nil, 0, fmt.Errorf("%w: parent_pid %d", policy.ErrProtectedTarget, ppid)
 		}
 		return "kill", []string{"-CHLD", strconv.Itoa(ppid)}, 10 * time.Second, nil

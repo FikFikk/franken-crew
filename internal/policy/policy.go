@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -147,9 +148,167 @@ func (c *Catalog) IsProtectedUnit(unit string) bool {
 	return c.unitMap[base]
 }
 
-// IsProtectedPID memeriksa apakah sebuah PID termasuk proses kernel/systemd utama yang dilindungi
+// Daftar nama proses infrastruktur inti yang wajib dilindungi oleh IsProtectedPID.
+// Catatan: kernel Linux memotong nama comm di /proc/<pid>/stat maksimal 15 karakter (TASK_COMM_LEN-1).
+var defaultProtectedProcessNames = map[string]bool{
+	"init":             true,
+	"systemd":          true,
+	"kthreadd":         true,
+	"sshd":             true,
+	"sshd-session":     true,
+	"sshd-auth":        true,
+	"systemd-journald": true,
+	"systemd-journal":  true,
+	"systemd-logind":   true,
+	"systemd-udevd":    true,
+	"systemd-resolved": true,
+	"dbus-daemon":      true,
+	"dbus-broker":      true,
+	"tailscaled":       true,
+	"franken":          true,
+	"franken-sentinel": true,
+	"franken-sentine":  true,
+	"wa-bridge":        true,
+}
+
+// IsProtectedPID memeriksa apakah sebuah PID termasuk proses kernel, infrastruktur sistem, atau daemon Sentinel yang dilindungi.
 func (c *Catalog) IsProtectedPID(pid int) bool {
-	return c.pidMap[pid]
+	return c.IsProtectedPIDWithReader(pid, nil)
+}
+
+// IsProtectedPIDWithReader memeriksa proteksi PID secara dinamis dengan membaca `/proc/<pid>/stat` dan `/proc/<pid>/cmdline`.
+func (c *Catalog) IsProtectedPIDWithReader(pid int, readFile func(string) ([]byte, error)) bool {
+	// PID <= 1 (init/process group) dan PID 2 (kthreadd) wajib dilindungi mutlak.
+	if pid <= 1 || pid == 2 {
+		return true
+	}
+	if c != nil && c.pidMap[pid] {
+		return true
+	}
+	if readFile == nil {
+		if pid == os.Getpid() {
+			return true
+		}
+		readFile = os.ReadFile
+	}
+
+	procBase := fmt.Sprintf("/proc/%d", pid)
+	statRaw, statErr := readFile(procBase + "/stat")
+	cmdRaw, cmdErr := readFile(procBase + "/cmdline")
+	if statErr != nil && cmdErr != nil {
+		return false
+	}
+
+	return c.isProtectedProcessMetadata(statRaw, cmdRaw)
+}
+
+func (c *Catalog) isProtectedProcessMetadata(statRaw, cmdRaw []byte) bool {
+	hasCmdline := len(bytes.Trim(cmdRaw, "\x00 \t\r\n")) > 0
+
+	if len(statRaw) > 0 {
+		if comm, ppid, ok := parseStatCommAndPPID(string(statRaw)); ok {
+			if ppid == 2 && !hasCmdline {
+				// Kernel thread anak kthreadd selalu memiliki cmdline kosong dan PPID 2.
+				return true
+			}
+			if c.isProtectedProcessName(comm) {
+				return true
+			}
+		}
+	}
+
+	if hasCmdline {
+		exe, args := parseCmdlineExecutable(cmdRaw)
+		if c.isProtectedProcessName(exe) {
+			return true
+		}
+		// Lindungi proses biner Go / custom launcher jika menjalankan subcommand daemon sentinel.
+		if exe == "franken" && len(args) > 1 {
+			sub := strings.ToLower(args[1])
+			if sub == "sentinel" || sub == "mcp" || sub == "wa-login" {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func (c *Catalog) isProtectedProcessName(raw string) bool {
+	clean := normalizeProcToken(raw)
+	if clean == "" {
+		return false
+	}
+	if defaultProtectedProcessNames[clean] {
+		return true
+	}
+	if c == nil {
+		return false
+	}
+	base := strings.TrimSuffix(clean, ".service")
+	if c.unitMap[clean] || c.unitMap[base] {
+		return true
+	}
+	// Tangani pemotongan comm 15 karakter milik /proc/<pid>/stat untuk protected_units yang panjang.
+	if len(base) == 15 {
+		for unit := range c.unitMap {
+			u := strings.TrimSuffix(unit, ".service")
+			if len(u) > 15 && u[:15] == base {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func parseStatCommAndPPID(rawStat string) (string, int, bool) {
+	trimmed := strings.TrimSpace(rawStat)
+	openIdx := strings.IndexByte(trimmed, '(')
+	closeIdx := strings.LastIndexByte(trimmed, ')')
+	if openIdx == -1 || closeIdx == -1 || closeIdx <= openIdx {
+		return "", 0, false
+	}
+	comm := strings.ToLower(strings.TrimSpace(trimmed[openIdx+1 : closeIdx]))
+	after := strings.Fields(trimmed[closeIdx+1:])
+	ppid := 0
+	if len(after) >= 2 {
+		if parsed, err := strconv.Atoi(after[1]); err == nil {
+			ppid = parsed
+		}
+	}
+	return comm, ppid, true
+}
+
+func parseCmdlineExecutable(cmdRaw []byte) (string, []string) {
+	parts := bytes.Split(cmdRaw, []byte{0})
+	args := make([]string, 0, len(parts))
+	for _, p := range parts {
+		s := strings.TrimSpace(string(p))
+		if s != "" {
+			args = append(args, s)
+		}
+	}
+	if len(args) == 0 {
+		return "", nil
+	}
+	return normalizeProcToken(args[0]), args
+}
+
+func normalizeProcToken(raw string) string {
+	clean := strings.TrimSpace(raw)
+	if clean == "" {
+		return ""
+	}
+	// Format seperti "sshd: root@pts/0" dipotong sebelum spasi agar hanya nama proses yang dibandingkan.
+	if idx := strings.IndexAny(clean, " \t"); idx != -1 {
+		clean = clean[:idx]
+	}
+	clean = strings.TrimPrefix(clean, "-")
+	if idx := strings.LastIndexAny(clean, "/\\"); idx != -1 {
+		clean = clean[idx+1:]
+	}
+	clean = strings.TrimSuffix(clean, ":")
+	return strings.ToLower(clean)
 }
 
 // GetAction mengembalikan definisi aksi berdasarkan nama

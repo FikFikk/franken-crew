@@ -397,10 +397,11 @@ func (d *Daemon) consumeJournalEvents(ctx context.Context, ch <-chan journal.Jou
 		case jev := <-ch:
 			rawBytes, _ := json.Marshal(jev)
 			redacted := redact.String(string(rawBytes))
+			redactedMsg := redact.String(jev.Message)
 
 			d.cfg.MCPServer.Broker().Publish(mcpserver.StreamEvent{
 				Type:    "journal.pattern",
-				Summary: fmt.Sprintf("[%s] %s on %s", jev.Category, jev.Message, jev.Unit),
+				Summary: fmt.Sprintf("[%s] %s on %s", jev.Category, redactedMsg, jev.Unit),
 				Data: map[string]any{
 					"category": jev.Category,
 					"unit":     jev.Unit,
@@ -415,7 +416,7 @@ func (d *Daemon) consumeJournalEvents(ctx context.Context, ch <-chan journal.Jou
 					ID:           newSentinelID("EVD"),
 					IncidentID:   incidentID,
 					Kind:         "journal_pattern",
-					RawData:      string(rawBytes),
+					RawData:      redacted,
 					RedactedData: redacted,
 					CapturedAt:   d.cfg.Clock().UTC(),
 				})
@@ -469,12 +470,14 @@ func (d *Daemon) reconcileEvaluation(ctx context.Context, cgPath, rel string, sa
 			d.lastSeverity[rel] = eval.Severity
 
 			samplePayload, _ := json.Marshal(sample)
+			redactedSample := redact.String(string(samplePayload))
 			_ = d.cfg.Store.SaveEvidence(ctx, &incident.EvidenceSnapshot{
-				ID:         newSentinelID("EVD"),
-				IncidentID: incID,
-				Kind:       "telemetry_sample",
-				RawData:    string(samplePayload),
-				CapturedAt: d.cfg.Clock().UTC(),
+				ID:           newSentinelID("EVD"),
+				IncidentID:   incID,
+				Kind:         "telemetry_sample",
+				RawData:      redactedSample,
+				RedactedData: redactedSample,
+				CapturedAt:   d.cfg.Clock().UTC(),
 			})
 
 			broker.Publish(mcpserver.StreamEvent{
@@ -546,7 +549,7 @@ func (d *Daemon) reconcileEvaluation(ctx context.Context, cgPath, rel string, sa
 }
 
 func (d *Daemon) maybeApplyReflex(ctx context.Context, inc *incident.Incident, cgPath, rel string, eval detector.Evaluation, broker *mcpserver.EventBroker) error {
-	if d.cfg.Catalog.IsProtectedUnit(rel) || d.cfg.Catalog.IsProtectedUnit(path.Base(rel)) {
+	if d.cfg.Catalog.IsProtectedUnit(rel) || d.cfg.Catalog.IsProtectedUnit(path.Base(rel)) || !d.isEligibleReflexTarget(cgPath, rel) {
 		return nil
 	}
 
@@ -682,43 +685,104 @@ func (d *Daemon) resolveTargetCgroups() []string {
 		}
 	}
 
-	// Temukan sub-cgroup layanan di franken.slice, system.slice, atau langsung di bawah cgroupRoot
+	// Temukan sub-cgroup layanan leaf (.service) hanya di dalam franken.slice dan system.slice;
+	// jangan pernah memindai root cgroup, init.scope, user.slice, atau root slice itu sendiri.
 	var discovered []string
-	for _, sub := range []string{"franken.slice", "system.slice", ""} {
-		dir := d.cfg.CgroupRoot
-		if sub != "" {
-			dir = kernelfs.JoinPath(d.cfg.CgroupRoot, sub)
-		}
-		entries, err := d.cfg.FS.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, ent := range entries {
-			if !ent.IsDir() {
-				continue
-			}
-			name := ent.Name()
-			if d.cfg.Catalog.IsProtectedUnit(name) {
-				continue
-			}
-			candidate := kernelfs.JoinPath(dir, name)
-			if _, statErr := d.cfg.FS.Stat(kernelfs.JoinPath(candidate, "memory.current")); statErr == nil {
-				if !slices.Contains(discovered, candidate) {
-					discovered = append(discovered, candidate)
-				}
-			}
-			if len(discovered) >= maxDiscoveredCgroups {
-				return discovered
-			}
-		}
-	}
-
-	if len(discovered) == 0 {
-		if _, err := d.cfg.FS.Stat(kernelfs.JoinPath(d.cfg.CgroupRoot, "memory.current")); err == nil {
-			discovered = append(discovered, d.cfg.CgroupRoot)
+	for _, sub := range []string{"franken.slice", "system.slice"} {
+		dir := kernelfs.JoinPath(d.cfg.CgroupRoot, sub)
+		d.walkLeafServiceCgroups(dir, 0, &discovered)
+		if len(discovered) >= maxDiscoveredCgroups {
+			break
 		}
 	}
 	return discovered
+}
+
+// walkLeafServiceCgroups menelusuri hierarki slice secara terbatas untuk mengumpulkan hanya leaf cgroup *.service.
+func (d *Daemon) walkLeafServiceCgroups(dir string, depth int, discovered *[]string) {
+	if depth > 4 || len(*discovered) >= maxDiscoveredCgroups {
+		return
+	}
+	entries, err := d.cfg.FS.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, ent := range entries {
+		if len(*discovered) >= maxDiscoveredCgroups {
+			return
+		}
+		if !ent.IsDir() {
+			continue
+		}
+		name := ent.Name()
+		if isDisallowedCgroupNode(name) || d.cfg.Catalog.IsProtectedUnit(name) {
+			continue
+		}
+		candidate := kernelfs.JoinPath(dir, name)
+		if strings.HasSuffix(name, ".slice") {
+			// Telusuri isi sub-slice (kecuali user.slice yang sudah disaring) tanpa memasukkan slice-nya ke target.
+			d.walkLeafServiceCgroups(candidate, depth+1, discovered)
+			continue
+		}
+		if !strings.HasSuffix(name, ".service") {
+			continue
+		}
+		if !d.isLeafCgroupDir(candidate) {
+			continue
+		}
+		if _, statErr := d.cfg.FS.Stat(kernelfs.JoinPath(candidate, "memory.current")); statErr == nil {
+			if !slices.Contains(*discovered, candidate) {
+				*discovered = append(*discovered, candidate)
+			}
+		}
+	}
+}
+
+// isDisallowedCgroupNode memblokir root/system slice, init.scope, user.slice, dan scope sesi admin dari target refleks.
+func isDisallowedCgroupNode(name string) bool {
+	if name == "" || name == "." || name == ".." || name == "init.scope" || name == "user.slice" {
+		return true
+	}
+	if strings.HasPrefix(name, "user-") && strings.HasSuffix(name, ".slice") {
+		return true
+	}
+	return strings.HasSuffix(name, ".scope")
+}
+
+// isLeafCgroupDir memastikan direktori cgroup tidak memiliki sub-cgroup anak sehingga refleks tidak mengenai induk/OS.
+func (d *Daemon) isLeafCgroupDir(cgPath string) bool {
+	if d.cfg.FS == nil {
+		return true
+	}
+	entries, err := d.cfg.FS.ReadDir(cgPath)
+	if err != nil {
+		return true
+	}
+	for _, ent := range entries {
+		if ent.IsDir() {
+			return false
+		}
+	}
+	return true
+}
+
+// isEligibleReflexTarget memverifikasi bahwa target refleks adalah leaf .service cgroup dan bukan slice/scope/root.
+func (d *Daemon) isEligibleReflexTarget(cgPath, rel string) bool {
+	trimmed := strings.Trim(strings.TrimSpace(rel), "/")
+	if trimmed == "" || trimmed == "." {
+		return false
+	}
+	segments := strings.Split(trimmed, "/")
+	for _, seg := range segments {
+		if isDisallowedCgroupNode(seg) {
+			return false
+		}
+	}
+	leaf := segments[len(segments)-1]
+	if strings.HasSuffix(leaf, ".slice") || !strings.HasSuffix(leaf, ".service") {
+		return false
+	}
+	return d.isLeafCgroupDir(cgPath)
 }
 
 func (d *Daemon) relativeCgroup(cgPath string) string {
@@ -748,18 +812,20 @@ func (d *Daemon) matchTargetsForRel(targets []string, rel string) []string {
 }
 
 func (d *Daemon) findOpenIncidentForUnit(unit string) string {
+	trimmedUnit := strings.TrimSpace(unit)
+	if trimmedUnit == "" {
+		return ""
+	}
+	normalizedUnit := strings.TrimSuffix(trimmedUnit, ".service")
+
 	d.evalMu.Lock()
 	defer d.evalMu.Unlock()
 
-	if unit != "" {
-		for rel, id := range d.openByCgroup {
-			if strings.Contains(rel, unit) {
-				return id
-			}
+	for rel, id := range d.openByCgroup {
+		base := path.Base(strings.TrimSuffix(rel, "/"))
+		if base == trimmedUnit || strings.TrimSuffix(base, ".service") == normalizedUnit {
+			return id
 		}
-	}
-	for _, id := range d.openByCgroup {
-		return id
 	}
 	return ""
 }

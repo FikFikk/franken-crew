@@ -22,7 +22,7 @@
 | Query Params      | `since` (string, opsional, event id terakhir untuk resume)                                                                              |
 | Request Body      | —                                                                                                                                       |
 | Response          | `200` stream SSE: `incident.opened`, `incident.updated`, `reflex.applied`, `reflex.rolled_back`, `heartbeat` (15 s) · `401` token salah |
-| Notes             | Payload sudah diredaksi; mendukung header `Last-Event-ID`                                                                               |
+| Notes             | Payload (summary, map, dan slice bersarang) sudah diredaksi (`sk-...`, `08xx`/`+628xx` tanpa menyensor metrik numerik); mendukung header `Last-Event-ID` |
 
 | Field             | Detail                                                                                                                             |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
@@ -44,11 +44,11 @@
 | `incident_claim`      | L0    | `claimer`                                   | incident atau `null`                       | Atomik; mencegah klaim ganda                                    |
 | `psi_history`         | L0    | `cgroup`, `minutes ≤ 10`                    | seri some/full avg10                       | —                                                               |
 | `cgroup_top`          | L0    | `limit ≤ 10`                                | cgroup per memory                          | —                                                               |
-| `journal_tail`        | L0    | `unit`, `lines ≤ 200`                       | baris terredaksi + `evidence_id`           | —                                                               |
-| `process_tree`        | L0    | `cgroup`                                    | pohon proses                               | —                                                               |
+| `journal_tail`        | L0    | `unit`, `lines ≤ 200`                       | baris terredaksi + `evidence_id`           | `RawData` & `RedactedData` SQLite terredaksi sebelum persistensi (`sk-...`, `08xx`/`+628xx`); event journal hanya menempel ke insiden unit terkait |
+| `process_tree`        | L0    | `cgroup`                                    | pohon proses                               | Menandai `protected: true` via inspeksi `/proc/<pid>/{stat,cmdline}` |
 | `zombie_report`       | L0    | —                                           | zombie per PPID                            | —                                                               |
 | `plan_submit`         | L0    | `incident_id`, `plan`                       | `plan_hash`, tier per step, `violations[]` | Maks 2 revisi                                                   |
-| `action_execute`      | L1/L2 | `incident_id`, `step_id`, `approval_token?` | exit code, durasi, stderr terredaksi       | L2 tanpa token valid ditolak; PM2 via `systemd-run`; `process_terminate` eskalasi `SIGTERM` → `SIGKILL`; proses terlindungi ditolak |
+| `action_execute`      | L1/L2 | `incident_id`, `step_id`, `approval_token?` | exit code, durasi, stderr terredaksi       | L2 tanpa token valid ditolak; PM2 via `systemd-run`; `process_terminate` eskalasi `SIGTERM` → `SIGKILL`; proses terlindungi (`sshd`, `systemd-journald`, `tailscaled`, Sentinel, kernel thread, PID 1) ditolak |
 | `action_rollback`     | L1    | `reflex_id`                                 | status rollback                            | Retry exponential backoff sebelum terminal `FAILED_ROLLBACK`; unset `CPUQuota` di-reset ke `CPUQuota=` |
 | `incident_transition` | L0    | `incident_id`, `to`, `reason`               | state baru                                 | Transisi atomik satu transaksi SQL (`WHERE id = ? AND state = ?`) |
 | `verify_health`       | L0    | `incident_id`, `window_seconds = 120`, `require_window_coverage?`, `auto_transition?` | `status` (`PENDING_VERIFICATION` / `RESOLVED` / `FAILED`), `healthy`, `checks`, `rolled_back_reflexes` | Observasi forward ke depan via background worker; `PENDING_VERIFICATION` selama jendela berjalan; lulus → rollback refleks + opsional `RESOLVED`; gagal + `auto_transition` → rollback refleks + `ESCALATED` |

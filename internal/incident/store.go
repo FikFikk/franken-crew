@@ -403,9 +403,12 @@ func (s *Store) SaveEvidence(ctx context.Context, snapshot *EvidenceSnapshot) er
 		snapshot.CapturedAt = time.Now().UTC()
 	}
 
-	// Jalankan sensor otomatis jika data tersensor belum diisi
+	// Pastikan seluruh payload mentah maupun tersensor dibersihkan sebelum masuk ke SQLite
+	snapshot.RawData = redact.String(snapshot.RawData)
 	if snapshot.RedactedData == "" {
-		snapshot.RedactedData = redact.String(snapshot.RawData)
+		snapshot.RedactedData = snapshot.RawData
+	} else {
+		snapshot.RedactedData = redact.String(snapshot.RedactedData)
 	}
 
 	query := `

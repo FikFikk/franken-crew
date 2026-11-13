@@ -103,3 +103,87 @@ func TestLinesAndMap(t *testing.T) {
 	}
 }
 
+
+func TestString_Tahap4TokensIndonesianPhonesAndTelemetryBounds(t *testing.T) {
+	cases := []struct {
+		name        string
+		input       string
+		wantContain []string
+		wantAbsent  []string
+	}{
+		{
+			name:        "sensor token sk- format OpenAI dan Kiro tanpa memutus field lain",
+			input:       "Authorization failed using key sk-proj_abcDEF1234567890_XYZ987 when calling model",
+			wantContain: []string{"[REDACTED_TOKEN]", "when calling model"},
+			wantAbsent:  []string{"sk-proj_abcDEF1234567890_XYZ987"},
+		},
+		{
+			name:        "sensor nomor HP Indonesia 08xx dan +628xx sambil mempertahankan metrik byte dan epoch",
+			input:       `{"mem_bytes":1073741824,"ts_ms":1731500000123,"contact":"0812-3456-7890","alt":"+62 812-3456-7890","compact":"081234567890"}`,
+			wantContain: []string{"1073741824", "1731500000123", "[REDACTED_PHONE]"},
+			wantAbsent:  []string{"0812-3456-7890", "+62 812-3456-7890", "081234567890"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := String(tc.input)
+			for _, w := range tc.wantContain {
+				if !containsSubstr(got, w) {
+					t.Errorf("String(%q) = %q, tidak mengandung %q", tc.input, got, w)
+				}
+			}
+			for _, bad := range tc.wantAbsent {
+				if containsSubstr(got, bad) {
+					t.Errorf("String(%q) = %q, masih mengandung %q", tc.input, got, bad)
+				}
+			}
+		})
+	}
+}
+
+func TestMap_RecursiveNestedSlicesAndSecretKeys(t *testing.T) {
+	input := map[string]any{
+		"api_key":    "plain-api-key",
+		"mem_bytes":  1073741824,
+		"events":     []any{"contact 0812-3456-7890", map[string]any{"authorization": "secret", "msg": "token sk-1234567890abcdefghijklmnop bytes=1073741824"}},
+		"notes":      []string{"owner +6281234567890"},
+	}
+
+	got := Map(input)
+	if got["api_key"] != "[REDACTED_SECRET]" {
+		t.Fatalf("api_key seharusnya disensor, dapat: %v", got["api_key"])
+	}
+	if got["mem_bytes"] != 1073741824 {
+		t.Fatalf("mem_bytes tidak boleh berubah, dapat: %v", got["mem_bytes"])
+	}
+	events, ok := got["events"].([]any)
+	if !ok || len(events) != 2 {
+		t.Fatalf("events slice hilang atau berubah tipe: %#v", got["events"])
+	}
+	if s0, _ := events[0].(string); s0 != "contact [REDACTED_PHONE]" {
+		t.Errorf("events[0] = %q, harap 'contact [REDACTED_PHONE]'", s0)
+	}
+	nestedMap, ok := events[1].(map[string]any)
+	if !ok {
+		t.Fatalf("events[1] bukan map[string]any: %#v", events[1])
+	}
+	if nestedMap["authorization"] != "[REDACTED_SECRET]" {
+		t.Errorf("nested authorization = %v, harap [REDACTED_SECRET]", nestedMap["authorization"])
+	}
+	if msg, _ := nestedMap["msg"].(string); !containsSubstr(msg, "[REDACTED_TOKEN]") || !containsSubstr(msg, "1073741824") || containsSubstr(msg, "sk-1234567890") {
+		t.Errorf("nested msg tidak tersensor dengan benar: %q", msg)
+	}
+}
+
+func containsSubstr(s, sub string) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}

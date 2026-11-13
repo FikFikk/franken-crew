@@ -45,18 +45,18 @@ flowchart TD
 | ----------- | ---------------------------------------------- | --------------------------------------- |
 | id          | Format `INC-<yyyymmdd>-<hhmm>-<node>`          | Unik, tidak berubah                     |
 | severity    | P1 / P2 / P3 / POST_OOM                        | P3 tidak membuat incident aktif         |
-| cgroup      | Wajib, cgroup tersempit yang menjelaskan bukti | Blast radius minimal                    |
+| cgroup      | Wajib, leaf `*.service` cgroup di `franken.slice` / `system.slice` | Blast radius minimal; root cgroup, `init.scope`, `user.slice`, slice induk, dan non-leaf dikecualikan |
 | tto_seconds | Null jika slope ≤ 0                            | Dihitung dari EWMA 1 Hz                 |
 | state       | Lihat tabel transisi                           | Transisi hanya lewat state machine      |
-| reflexes    | Maksimal 3 aksi L1                             | Masing-masing punya TTL ≤ 15 menit      |
-| evidence    | Setiap item punya `evidence_id`                | Sudah diredaksi sebelum keluar Sentinel |
+| reflexes    | Maksimal 3 aksi L1                             | Hanya leaf `*.service` non-terlindungi; masing-masing TTL ≤ 15 menit |
+| evidence    | Setiap item punya `evidence_id`; hanya menempel ke unit yang cocok | `RawData` & `RedactedData` disensor sebelum simpan ke SQLite |
 
 ### 2.3 Evidence
 
 | Field         | Aturan             | Catatan                                   |
 | ------------- | ------------------ | ----------------------------------------- |
 | evidence_id   | Unik per incident  | Wajib dikutip oleh setiap langkah plan    |
-| journal_lines | Maksimal 200 baris | IP, email, nomor HP, token, JWT diredaksi |
+| journal_lines | Maksimal 200 baris | IP, email, nomor HP (`08xx`/`+628xx`/intl, batas kata menjaga byte & epoch utuh), token (`sk-...`), JWT diredaksi sebelum SQLite & SSE |
 | psi_history   | 10 menit terakhir  | some/full avg10                           |
 
 ### 2.4 Remediation Plan
@@ -145,8 +145,8 @@ flowchart TD
 | Kategori             | Aturan                                                                                                                 |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | Otoritas             | Aksi yang memutus koneksi, menghilangkan state, atau restart proses wajib vote manusia (L2)                            |
-| Larangan mutlak      | Raw shell, hapus file, reboot, ubah konfigurasi persisten, ubah `memory.max`, `drop_caches`, sentuh proses terlindungi |
-| Proses terlindungi   | PID 1, kernel thread, sshd, journald, logind, dbus, tailscaled, Sentinel, wa-bridge, Crew gateway                      |
+| Larangan mutlak      | Raw shell, hapus file, reboot, ubah konfigurasi persisten, ubah `memory.max`, `drop_caches`, sentuh proses terlindungi, refleks ke root/slice/`init.scope`/`user.slice` |
+| Proses terlindungi   | PID 1, `os.Getpid()`, kernel thread, `sshd`, `systemd-journald` (termasuk `comm` terpotong 15 char), `logind`, `dbus`, `tailscaled`, Sentinel, `wa-bridge`, Crew gateway via `/proc/<pid>/{stat,cmdline}` |
 | Eksekusi berantai    | Maksimal 2 langkah L2 per satu approval; verifikasi observasi forward pasca langkah (PM2 diisolasi via unit transien; `process_terminate` SIGTERM → grace → SIGKILL) |
 | Rate limit pesan     | ≤ 6 pesan per incident, ≤ 20 pesan per jam per node                                                                    |
 | Quiet hours          | 23:00–07:00: P3 ditunda ke digest pagi; P1/P2 selalu dikirim                                                           |
