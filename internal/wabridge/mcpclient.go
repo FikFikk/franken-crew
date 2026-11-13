@@ -305,6 +305,24 @@ func (c *SentinelClient) IncidentGet(ctx context.Context, incidentID string) (*m
 	return &out, nil
 }
 
+// NodeSnapshot mengambil ringkasan memori, PSI, dan kapabilitas node dari tool node_snapshot Sentinel.
+func (c *SentinelClient) NodeSnapshot(ctx context.Context, topLimit int) (*mcpserver.NodeSnapshotOutput, error) {
+	var out mcpserver.NodeSnapshotOutput
+	if err := c.CallTool(ctx, "node_snapshot", mcpserver.NodeSnapshotInput{TopLimit: topLimit}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// IncidentList mengambil insiden terbaru (opsional difilter per state) dari tool incident_list Sentinel.
+func (c *SentinelClient) IncidentList(ctx context.Context, state string, limit int) (*mcpserver.IncidentListOutput, error) {
+	var out mcpserver.IncidentListOutput
+	if err := c.CallTool(ctx, "incident_list", mcpserver.IncidentListInput{State: state, Limit: limit}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // PlanSubmit mengirim remediation plan agar divalidasi dan dihitung plan_hash kanoniknya oleh Sentinel.
 func (c *SentinelClient) PlanSubmit(ctx context.Context, incidentID string, plan policy.Plan) (*mcpserver.PlanSubmitOutput, error) {
 	var out mcpserver.PlanSubmitOutput
