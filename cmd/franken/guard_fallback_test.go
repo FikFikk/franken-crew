@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -44,5 +45,15 @@ func TestCLI_GuardInspectsNestedActionExecuteParams(t *testing.T) {
 				t.Fatalf("expected exit 2, got %d (stdout=%q stderr=%q)", code, stdout.String(), stderr.String())
 			}
 		})
+	}
+}
+
+// sentinel serve wajib menerima --postmortem-dir agar postmortem otomatis bisa ditulis ke StateDirectory systemd.
+func TestCLI_SentinelServeAcceptsPostmortemDirFlag(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	t.Setenv("FRANKEN_SENTINEL_EMPTY", "")
+	code := run([]string{"sentinel", "serve", "--postmortem-dir", t.TempDir(), "--token-env", "FRANKEN_SENTINEL_EMPTY"}, &stdout, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "bearer token") {
+		t.Fatalf("expected --postmortem-dir to parse and reach the bearer token check (exit 1), got %d (stderr=%s)", code, stderr.String())
 	}
 }

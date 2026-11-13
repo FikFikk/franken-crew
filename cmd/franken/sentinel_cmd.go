@@ -58,6 +58,9 @@ func runSentinelServe(args []string, stdout, stderr io.Writer) int {
 	fs.IntVar(&cfg.port, "port", 8090, "TCP port used when --tailscale is enabled")
 	fs.StringVar(&cfg.tokenEnv, "token-env", "FRANKEN_BEARER_TOKEN", "environment variable holding HTTP bearer auth token")
 	fs.StringVar(&cfg.nodeName, "node", "", "override Sentinel node identifier (defaults to hostname)")
+	fs.StringVar(&cfg.postmortemDir, "postmortem-dir", "incidents", "directory for incident postmortems written automatically when verification finishes (use /var/lib/franken/incidents under systemd)")
+	// Daemon Sentinel menutup loop insiden secara deterministik tanpa menunggu agen LLM
+	cfg.autoPostmortem = true
 	fs.StringVar(&cgroupsCSV, "cgroups", "", "comma-separated cgroup v2 paths to monitor (auto-discovered if omitted)")
 	fs.StringVar(&journalUnitsCSV, "journal-units", "", "comma-separated systemd units to follow via journalctl")
 	fs.DurationVar(&sampleInterval, "sample-interval", 1*time.Second, "1 Hz sampler tick interval")
