@@ -1,6 +1,6 @@
 # FrankenCrew — Dokumentasi Logika Bisnis
 
-> Status: **Sentinel Core + WhatsApp Bridge + Konfigurasi Kiro Selesai** (`internal/kernelfs`, `psi`, `cgroup`, `journal`, `detector`, `incident`, `redact`, `policy`, `executor`, `reflex`, `approval`, `mcpserver`, `sentinel`, `wabridge` dua arah dengan `whatsmeow` + `modernc.org/sqlite`, daemon `franken sentinel serve` & `cmd/wa-bridge`, Kiro `.kiro/{steering,hooks,agents,settings/mcp.json}`, serta CLI `franken keys init`, `franken mcp serve|stdio|connect`, `franken wa-login`, dan `franken guard --audit`). Sumber detail teknis: [docs/BLUEPRINT.md](docs/BLUEPRINT.md) dan [.kiro/specs/server-incident-remediation/](.kiro/specs/server-incident-remediation/).
+> Status: **Sentinel Core + WhatsApp Bridge + Kiro Crew + Chaos Suite Selesai** (`internal/kernelfs`, `psi`, `cgroup`, `journal`, `detector`, `incident`, `redact`, `policy`, `executor`, `reflex`, `approval`, `mcpserver` dengan `verify_health` 120s PSI+RAM & `postmortem_generate`, `postmortem`, `chaos`, `sentinel`, `wabridge` dua arah dengan `whatsmeow` + `modernc.org/sqlite`, unit `deploy/systemd/`, script `chaos/`, Kiro `.kiro/{steering,hooks/preToolUse.json,agents,crons,skills,settings/mcp.json}`, serta CLI `franken keys init`, `franken sentinel serve`, `franken mcp serve|stdio|connect`, `franken wa-login`, `franken postmortem`, `franken chaos run`, dan `franken guard --audit`). Sumber detail teknis: [docs/BLUEPRINT.md](docs/BLUEPRINT.md) dan [.kiro/specs/server-incident-remediation/](.kiro/specs/server-incident-remediation/).
 
 ## 1. Siklus Hidup Incident
 

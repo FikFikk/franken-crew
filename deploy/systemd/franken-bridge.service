@@ -1,0 +1,45 @@
+[Unit]
+Description=FrankenCrew Headless WhatsApp Bridge (SSE Consumer, Poll Signer & Heartbeat Watcher)
+Documentation=https://github.com/FikFikk/franken-crew
+After=network-online.target tailscaled.service franken-sentinel.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/franken/franken.env
+ExecStart=/usr/local/bin/wa-bridge serve --sentinel ${FRANKEN_SENTINEL_URL} --token-env FRANKEN_BEARER_TOKEN --priv-key /etc/franken/keys/bridge-ed25519.key --wa-db /var/lib/franken/wa-bridge-session.db --admins ${FRANKEN_WA_ADMINS}
+Restart=always
+RestartSec=3s
+TimeoutStopSec=15s
+
+# Proteksi OOM & batas maksimum RAM 48M; awas jika sinkronisasi awal WhatsApp besar melebihi 48M perlu tuning GOMEMLIMIT=36MiB
+Environment=GOMEMLIMIT=36MiB
+OOMScoreAdjust=-900
+MemoryMax=48M
+
+# Sandboxing penuh karena wa-bridge tidak memerlukan akses tulis ke /sys/fs/cgroup maupun root filesystem
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+PrivateDevices=yes
+ReadOnlyPaths=/etc/franken/keys
+ReadWritePaths=/var/lib/franken
+
+# Batasi keluarga soket hanya UNIX dan TCP/IP untuk koneksi Sentinel Tailscale dan WebSocket WhatsApp
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
+

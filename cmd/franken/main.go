@@ -35,6 +35,10 @@ func runWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return runSentinel(args[1:], stdout, stderr)
 	case "wa-login":
 		return runWALogin(args[1:], stdout, stderr)
+	case "postmortem":
+		return runPostmortem(args[1:], stdout, stderr)
+	case "chaos":
+		return runChaos(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
 		printRootUsage(stdout)
 		return 0
@@ -99,9 +103,11 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  keys      Manage Ed25519 approval keys")
 	fmt.Fprintln(w, "  mcp       Run Sentinel MCP server or stdio-to-HTTP connector")
-	fmt.Fprintln(w, "  sentinel  Run unified Sentinel daemon (probe + telemetry + reflex + MCP/SSE)")
-	fmt.Fprintln(w, "  wa-login  Pair headless WhatsApp session via terminal QR code (modernc SQLite)")
-	fmt.Fprintln(w, "  guard     PreToolUse policy & protected-target validator for Kiro hooks")
+	fmt.Fprintln(w, "  sentinel    Run unified Sentinel daemon (probe + telemetry + reflex + MCP/SSE)")
+	fmt.Fprintln(w, "  wa-login    Pair headless WhatsApp session via terminal QR code (modernc SQLite)")
+	fmt.Fprintln(w, "  postmortem  Generate redacted markdown incident postmortem from Sentinel SQLite DB")
+	fmt.Fprintln(w, "  chaos       Run deterministic 20-cycle chaos injection & recovery verification suite")
+	fmt.Fprintln(w, "  guard       PreToolUse policy & protected-target validator for Kiro hooks")
 }
 
 func printKeysUsage(w io.Writer) {

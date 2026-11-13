@@ -37,6 +37,7 @@ type Config struct {
 	BearerToken               string
 	AllowInsecureWildcardBind bool
 	HeartbeatInterval         time.Duration
+	PostmortemDir             string
 	Clock                     func() time.Time
 }
 

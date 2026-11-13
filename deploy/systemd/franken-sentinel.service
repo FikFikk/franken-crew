@@ -1,0 +1,46 @@
+[Unit]
+Description=FrankenCrew Sentinel Daemon (Kernel PSI Telemetry, L1 Reflex & MCP Server)
+Documentation=https://github.com/FikFikk/franken-crew
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/franken/franken.env
+ExecStart=/usr/local/bin/franken sentinel serve --tailscale --port 8090 --db /var/lib/franken/franken-sentinel.db --policy /etc/franken/policy/actions.yaml --pub-key /etc/franken/keys/bridge-ed25519.pub --token-env FRANKEN_BEARER_TOKEN
+Restart=always
+RestartSec=2s
+TimeoutStopSec=15s
+
+# Proteksi OOM & batasan memori ketat agar Sentinel bertahan saat node mengalami tekanan memori ekstrem
+OOMScoreAdjust=-900
+MemoryMin=32M
+MemoryHigh=42M
+MemoryMax=48M
+CPUWeight=200
+
+# Sandboxing filesystem & privilege minimal sesuai standar hardening systemd
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+PrivateDevices=yes
+ProtectControlGroups=no
+ReadWritePaths=/sys/fs/cgroup /var/lib/franken /run/franken
+
+# Isolasi namespace jaringan hanya ke AF_UNIX dan IPv4/IPv6 (Tailscale & loopback)
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
+

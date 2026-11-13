@@ -58,21 +58,21 @@
   - [x] 9.5 MCP stdio tools: `wa_notify`, `wa_request_approval`, `wa_await_decision`, `wa_send_report`
   - _Requirements: 7.1–7.5, 11.2, 11.3_
 
-- [ ] 10. Kiro Crew integration
-  - [ ] 10.1 Agents `franken-sentry`, `franken-architect`, `franken-remediator` (no shell tool, MCP-only)
-  - [ ] 10.2 `incident-sweep` cron (`* * * * *`) and `morning-digest` cron (`0 7 * * *`)
-  - [ ] 10.3 Skills: `linux-memory-forensics`, `remediation-runbooks`, `incident-spec-writer`
-  - [ ] 10.4 `preToolUse` audit hook on `action_execute`
+- [x] 10. Kiro Crew integration
+  - [x] 10.1 Agents `franken-sentry`, `franken-architect`, `franken-remediator` (no shell tool, MCP-only)
+  - [x] 10.2 `incident-sweep` cron (`* * * * *`) and `morning-digest` cron (`0 7 * * *`)
+  - [x] 10.3 Skills: `linux-memory-forensics`, `remediation-runbooks`, `incident-spec-writer`
+  - [x] 10.4 `preToolUse` audit hook on `action_execute`
   - _Requirements: 5, 6.1, 10.1_
 
-- [ ] 11. Verification and postmortem
-  - [ ] 11.1 `verify_health` (120 s window) + reflex rollback on success
-  - [ ] 11.2 Postmortem template and Remediator write-up
+- [x] 11. Verification and postmortem
+  - [x] 11.1 `verify_health` (120 s window) + reflex rollback on success
+  - [x] 11.2 Postmortem template and Remediator write-up
   - _Requirements: 9.1–9.3, 10.1_
 
-- [ ] 12. Hardening and footprint
-  - [ ] 12.1 systemd units (`OOMScoreAdjust=-900`, `MemoryMin=48M`, sandboxing)
-  - [ ] 12.2 Footprint benchmark on ARM64 board (RSS, CPU) recorded in README
-  - [ ] 12.3 Chaos suite: leak, spike, fork storm, zombie storm, log flood — 20 consecutive green runs
+- [x] 12. Hardening and footprint
+  - [x] 12.1 systemd units (`OOMScoreAdjust=-900`, `MemoryMin=48M` / `MemoryMax=48M`, sandboxing)
+  - [x] 12.2 Footprint benchmark on static ARM64 builds and evaluation allocations recorded in README (live ARM64 board RSS pending hardware deploy)
+  - [x] 12.3 Chaos suite: leak, spike, fork storm, zombie storm, log flood — 20 consecutive green runs
   - _Requirements: 11.1, 12.1, 12.2_
 

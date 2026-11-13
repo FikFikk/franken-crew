@@ -1,9 +1,10 @@
 {
   "name": "franken-sentry",
-  "description": "Read-only Level 0 triage agent that inspects live host telemetry, PSI pressure spikes, cgroups, journal logs, and process trees via Sentinel MCP.",
+  "description": "Read-only Level 0 monitor and triage agent inspecting live telemetry, PSI spikes, cgroups, journal streams, and zombie processes via Sentinel MCP.",
   "model": "claude-sonnet-4",
-  "prompt": "You are Franken-Sentry, the read-only incident triage agent for Franken-Crew. On an incident signal, inspect the affected host exclusively using Level 0 read-only Sentinel MCP tools (node_snapshot, incident_list, incident_get, psi_history, cgroup_top, journal_tail, process_tree, zombie_report). Never execute mutating actions, never request raw secrets, and summarize the root-cause signal, offending cgroup/unit, memory delta, and active L1 reflexes for Franken-Architect.",
+  "prompt": "You are Franken-Sentry, the read-only monitor and triage agent for FrankenCrew. On an open incident signal or cron sweep, claim an unclaimed incident with @franken-sentinel/incident_claim and inspect telemetry strictly via Level 0 read-only tools (node_snapshot, incident_list, incident_get, psi_history, cgroup_top, journal_tail, process_tree, zombie_report). Classify the anomaly into one class (heap_leak, traffic_spike, fork_storm, zombie_accumulation, log_flood, swap_thrash, external, unknown), attach confidence in [0,1], cite evidence_ids returned by Sentinel, and hand off to Franken-Architect. Never invoke mutating actions or shell commands.",
   "tools": [
+    "@franken-sentinel/incident_claim",
     "@franken-sentinel/node_snapshot",
     "@franken-sentinel/incident_list",
     "@franken-sentinel/incident_get",
@@ -15,6 +16,10 @@
   ],
   "permissions": {
     "rules": [
+      {
+        "action": "allow",
+        "tool": "@franken-sentinel/incident_claim"
+      },
       {
         "action": "allow",
         "tool": "@franken-sentinel/node_snapshot"
@@ -53,6 +58,10 @@
       },
       {
         "action": "deny",
+        "tool": "@franken-sentinel/action_rollback"
+      },
+      {
+        "action": "deny",
         "tool": "@franken-sentinel/plan_submit"
       },
       {
@@ -63,10 +72,8 @@
   },
   "mcpServers": {
     "franken-sentinel": {
-      "command": "go",
+      "command": "franken",
       "args": [
-        "run",
-        "./cmd/franken",
         "mcp",
         "connect",
         "sentinel@localhost",
@@ -86,6 +93,7 @@
   "resources": [
     "file://.kiro/steering/rules.md",
     "file://.kiro/steering/incident-response.md",
+    "file://.kiro/skills/linux-memory-forensics/SKILL.md",
     "file://policy/actions.yaml"
   ]
 }

@@ -282,6 +282,25 @@ func (s *Store) ClaimIncident(ctx context.Context, incidentID, claimer string) (
 	return &inc, nil
 }
 
+// SaveTriage menyimpan payload JSON hasil klasifikasi triage agen Sentry pada rekaman insiden.
+func (s *Store) SaveTriage(ctx context.Context, incidentID, triageJSON string) error {
+	now := time.Now().UTC()
+	res, err := s.db.ExecContext(ctx, `
+	UPDATE incidents SET triage_json = ?, updated_at = ? WHERE id = ?;
+	`, triageJSON, now, incidentID)
+	if err != nil {
+		return fmt.Errorf("save triage for %s: %w", incidentID, err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("save triage rows affected %s: %w", incidentID, err)
+	}
+	if affected == 0 {
+		return ErrIncidentNotFound
+	}
+	return nil
+}
+
 // SavePlan menyimpan payload JSON rencana mitigasi tervalidasi pada rekaman insiden.
 func (s *Store) SavePlan(ctx context.Context, incidentID, planJSON string) error {
 	now := time.Now().UTC()

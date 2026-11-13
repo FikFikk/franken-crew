@@ -1,0 +1,22 @@
+{
+  "name": "incident-sweep",
+  "description": "Claim open P1/P2/POST_OOM incidents atomically and drive the Sentry -> Architect -> Remediator pipeline.",
+  "schedule": "* * * * *",
+  "timezone": "UTC",
+  "enabled": true,
+  "pipeline": [
+    {
+      "agent": "franken-sentry",
+      "task": "Call @franken-sentinel/incident_claim with claimer='franken-sentry'. If an incident is returned, gather PSI history, cgroup top consumers, redacted journal lines, process tree, and zombie counts to classify the root-cause pattern with confidence and evidence_ids."
+    },
+    {
+      "agent": "franken-architect",
+      "task": "Read triage output and incident evidence. If confidence < 0.6, escalate via @franken-sentinel/incident_transition. Otherwise build and submit a policy-valid plan via @franken-sentinel/plan_submit using only catalog actions in policy/actions.yaml."
+    },
+    {
+      "agent": "franken-remediator",
+      "task": "If the submitted plan has L2 steps, request human vote with @franken-wa/wa_request_approval, wait for Ed25519 token via @franken-wa/wa_await_decision, run @franken-sentinel/action_execute, verify 120s health with @franken-sentinel/verify_health (auto_transition=true), call @franken-sentinel/postmortem_generate, and send final report via @franken-wa/wa_send_report."
+    }
+  ]
+}
+

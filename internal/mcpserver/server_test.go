@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -969,5 +970,112 @@ func TestMCP_HealthzDegraded503AndListenGuard(t *testing.T) {
 	defer listenCancel()
 	if err := srv.ListenAndServe(listenCtx, "127.0.0.1:0"); err != nil {
 		t.Errorf("ListenAndServe graceful shutdown failed: %v", err)
+	}
+}
+
+func TestMCP_VerifyHealth_120sWindowRAMStabilityAndEscalation(t *testing.T) {
+	h := setupTestMCPHarness(t)
+	h.srv.cfg.PostmortemDir = filepath.Join(t.TempDir(), "incidents")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 1. Insiden stabil selama 120s (PSI < 5/1 dan RAM datar) -> lulus + RESOLVED + rollback L1
+	incPass := "INC-20261113-1100-pi01"
+	_ = h.store.CreateIncident(ctx, &incident.Incident{
+		ID: incPass, Node: "pi01", Cgroup: "/franken.slice/haunted-api.service", Severity: "P2", State: incident.StateVerifying,
+	})
+	_ = h.store.SaveReflexAction(ctx, &incident.ReflexAction{
+		ID: "RFX-PASS", IncidentID: incPass, Action: "cgroup_throttle", Target: "haunted-api.service",
+		ParamsJSON: `{}`, AppliedAt: h.now.Add(-2 * time.Minute), TTLSeconds: 300, ExpiresAt: h.now.Add(3 * time.Minute), Status: "APPLIED",
+	})
+	for sec := 115; sec >= 0; sec -= 15 {
+		h.srv.PSIRing().Record("/franken.slice/haunted-api.service", PSIPoint{
+			At:            h.now.Add(-time.Duration(sec) * time.Second),
+			SomeAvg10:     1.8,
+			FullAvg10:     0.2,
+			MemoryCurrent: 220 * 1024 * 1024,
+		})
+	}
+
+	session, cleanup := connectPipeMCPClient(t, ctx, h.srv)
+	defer cleanup()
+
+	passRes, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "verify_health",
+		Arguments: map[string]any{
+			"incident_id":             incPass,
+			"unit":                    "haunted-api.service",
+			"window_seconds":          120,
+			"require_window_coverage": true,
+			"auto_transition":         true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("verify_health pass call: %v", err)
+	}
+	passOut := decodeStructured[VerifyHealthOutput](t, passRes)
+	if !passOut.Healthy || passOut.State != string(incident.StateResolved) || passOut.RolledBackReflexes != 1 {
+		t.Fatalf("expected healthy RESOLVED with 1 rollback, got %+v", passOut)
+	}
+	if !passOut.Checks.PSIStable || !passOut.Checks.MemoryStable || passOut.Checks.WindowSpanSeconds < 100 {
+		t.Errorf("expected PSI & RAM window stability metrics populated, got %+v", passOut.Checks)
+	}
+
+	// 2. Uji tool postmortem_generate membuat berkas markdown terredaksi di PostmortemDir
+	pmRes, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "postmortem_generate",
+		Arguments: map[string]any{
+			"incident_id": incPass,
+			"author":      "franken-remediator",
+			"notes":       "Recovered without leaks; token=sk-supersecret123456 redacted.",
+		},
+	})
+	if err != nil || pmRes.IsError {
+		t.Fatalf("postmortem_generate failed: err=%v res=%+v", err, pmRes)
+	}
+	pmOut := decodeStructured[PostmortemGenerateOutput](t, pmRes)
+	if _, statErr := os.Stat(pmOut.FilePath); statErr != nil {
+		t.Fatalf("expected postmortem file created at %q: %v", pmOut.FilePath, statErr)
+	}
+	if strings.Contains(pmOut.Markdown, "sk-supersecret123456") {
+		t.Errorf("postmortem_generate leaked secret in markdown output")
+	}
+
+	// 3. Insiden gagal karena lonjakan RAM > 15% pada jendela 120s -> rollback L1 & auto-ESCALATED
+	incLeak := "INC-20261113-1105-pi01"
+	_ = h.store.CreateIncident(ctx, &incident.Incident{
+		ID: incLeak, Node: "pi01", Cgroup: "/franken.slice/worker.service", Severity: "P1", State: incident.StateVerifying,
+	})
+	_ = h.store.SaveReflexAction(ctx, &incident.ReflexAction{
+		ID: "RFX-LEAK", IncidentID: incLeak, Action: "admission_close", Target: "worker",
+		ParamsJSON: `{}`, AppliedAt: h.now.Add(-2 * time.Minute), TTLSeconds: 300, ExpiresAt: h.now.Add(3 * time.Minute), Status: "APPLIED",
+	})
+	h.srv.PSIRing().Record("/franken.slice/worker.service", PSIPoint{
+		At:            h.now.Add(-110 * time.Second),
+		SomeAvg10:     2.0,
+		FullAvg10:     0.1,
+		MemoryCurrent: 100 * 1024 * 1024,
+	})
+	h.srv.PSIRing().Record("/franken.slice/worker.service", PSIPoint{
+		At:            h.now.Add(-10 * time.Second),
+		SomeAvg10:     2.2,
+		FullAvg10:     0.2,
+		MemoryCurrent: 150 * 1024 * 1024, // tumbuh +50% selama jendela pemulihan
+	})
+
+	failRes, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "verify_health",
+		Arguments: map[string]any{
+			"incident_id":     incLeak,
+			"window_seconds":  120,
+			"auto_transition": true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("verify_health leak call: %v", err)
+	}
+	failOut := decodeStructured[VerifyHealthOutput](t, failRes)
+	if failOut.Healthy || failOut.Checks.MemoryStable || failOut.State != string(incident.StateEscalated) || failOut.RolledBackReflexes != 1 {
+		t.Fatalf("expected unhealthy ESCALATED with MemoryStable=false and 1 rollback, got %+v", failOut)
 	}
 }

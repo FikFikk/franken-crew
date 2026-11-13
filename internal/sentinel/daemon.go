@@ -291,9 +291,10 @@ func (d *Daemon) EvaluateOnce(ctx context.Context, cgPath string) (detector.Eval
 	}
 
 	d.cfg.MCPServer.PSIRing().Record(rel, mcpserver.PSIPoint{
-		At:        now,
-		SomeAvg10: sample.PSISomeAvg10,
-		FullAvg10: sample.PSIFullAvg10,
+		At:            now,
+		SomeAvg10:     sample.PSISomeAvg10,
+		FullAvg10:     sample.PSIFullAvg10,
+		MemoryCurrent: sample.MemoryCurrent,
 	})
 
 	detSample := detector.Sample{
@@ -439,7 +440,12 @@ func (d *Daemon) reconcileEvaluation(ctx context.Context, cgPath, rel string, sa
 
 	incID := eval.IncidentID
 	if existingID, ok := d.openByCgroup[rel]; ok && existingID != "" {
-		incID = existingID
+		if existingInc, gErr := d.cfg.Store.GetIncident(ctx, existingID); gErr == nil && !isTerminalState(existingInc.State) {
+			incID = existingID
+		} else {
+			delete(d.openByCgroup, rel)
+			delete(d.lastSeverity, rel)
+		}
 	}
 
 	inc, getErr := d.cfg.Store.GetIncident(ctx, incID)

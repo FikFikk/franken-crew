@@ -17,6 +17,7 @@ import (
 	"github.com/FikFikk/franken-crew/internal/executor"
 	"github.com/FikFikk/franken-crew/internal/incident"
 	"github.com/FikFikk/franken-crew/internal/policy"
+	"github.com/FikFikk/franken-crew/internal/postmortem"
 	"github.com/FikFikk/franken-crew/internal/redact"
 	"github.com/FikFikk/franken-crew/internal/reflex"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -25,10 +26,14 @@ import (
 const (
 	// MaxPlanRevisions membatasi pengajuan ulang rencana gagal maksimal 2 revisi sebelum eskalasi (Requirement 6.4).
 	MaxPlanRevisions = 2
-	// HealthPSIHalfSomeMax adalah ambang setengah batas PSI some avg10 (10%) saat verifikasi pemulihan.
-	HealthPSIHalfSomeMax = 10.0
-	// HealthPSIHalfFullMax adalah ambang setengah batas PSI full avg10 (5%) saat verifikasi pemulihan.
-	HealthPSIHalfFullMax = 5.0
+	// HealthPSIHalfSomeMax adalah batas sehat PSI some avg10 (< 5.0) selama verifikasi 120 detik (steering Section 7).
+	HealthPSIHalfSomeMax = 5.0
+	// HealthPSIHalfFullMax adalah batas sehat PSI full avg10 (< 1.0) selama verifikasi 120 detik (steering Section 7).
+	HealthPSIHalfFullMax = 1.0
+	// MaxVerifyMemoryGrowthPct adalah batas pertumbuhan RAM wajar (%) sepanjang jendela pemulihan 120 detik.
+	MaxVerifyMemoryGrowthPct = 15.0
+	// MaxCgroupMemoryUtilizationPct menolak kelulusan verifikasi bila RAM live >= 95% dari memory.max cgroup.
+	MaxCgroupMemoryUtilizationPct = 95.0
 )
 
 var (
@@ -106,34 +111,62 @@ type IncidentTransitionOutput struct {
 
 // VerifyHealthInput memuat parameter evaluasi kesehatan server pasca-remediasi.
 type VerifyHealthInput struct {
-	IncidentID      string  `json:"incident_id" jsonschema:"ID insiden yang dievaluasi kesehatannya"`
-	Cgroup          string  `json:"cgroup,omitempty" jsonschema:"path cgroup opsional (default mengambil cgroup milik insiden)"`
-	Unit            string  `json:"unit,omitempty" jsonschema:"nama unit systemd opsional untuk verifikasi status aktif"`
-	WindowSeconds   int     `json:"window_seconds,omitempty" jsonschema:"jendela evaluasi metrik PSI dalam detik (default 120)"`
-	ProbeURL        string  `json:"probe_url,omitempty" jsonschema:"endpoint HTTP loopback opsional untuk healthcheck aplikasi"`
-	BaselineOOMKill *uint64 `json:"baseline_oom_kill,omitempty" jsonschema:"nilai awal oom_kill cgroup untuk mendeteksi OOM baru"`
+	IncidentID            string  `json:"incident_id" jsonschema:"ID insiden yang dievaluasi kesehatannya"`
+	Cgroup                string  `json:"cgroup,omitempty" jsonschema:"path cgroup opsional (default mengambil cgroup milik insiden)"`
+	Unit                  string  `json:"unit,omitempty" jsonschema:"nama unit systemd opsional untuk verifikasi status aktif"`
+	WindowSeconds         int     `json:"window_seconds,omitempty" jsonschema:"jendela evaluasi metrik PSI dan stabilitas RAM dalam detik (default 120)"`
+	ProbeURL              string  `json:"probe_url,omitempty" jsonschema:"endpoint HTTP loopback opsional untuk healthcheck aplikasi"`
+	BaselineOOMKill       *uint64 `json:"baseline_oom_kill,omitempty" jsonschema:"nilai awal oom_kill cgroup untuk mendeteksi OOM baru"`
+	RequireWindowCoverage bool    `json:"require_window_coverage,omitempty" jsonschema:"mewajibkan minimal 80 persen cakupan jendela waktu sampel 120s"`
+	AutoTransition        bool    `json:"auto_transition,omitempty" jsonschema:"otomatis transisikan ke RESOLVED saat sehat atau rollback L1 + ESCALATED saat gagal"`
 }
 
-// HealthChecksDetail merinci hasil setiap aspek pemeriksaan kesehatan.
+// HealthChecksDetail merinci hasil setiap aspek pemeriksaan kesehatan PSI & stabilitas RAM.
 type HealthChecksDetail struct {
-	PSISomeAvg10     float64 `json:"psi_some_avg10"`
-	PSIFullAvg10     float64 `json:"psi_full_avg10"`
-	MemoryCurrent    uint64  `json:"memory_current_bytes"`
-	OOMKillCount     uint64  `json:"oom_kill_count"`
-	WindowSamples    int     `json:"window_samples_checked"`
-	UnitChecked      string  `json:"unit_checked,omitempty"`
-	UnitActive       *bool   `json:"unit_active,omitempty"`
-	ProbeURLChecked  string  `json:"probe_url_checked,omitempty"`
-	ProbeStatusCode  int     `json:"probe_status_code,omitempty"`
+	PSISomeAvg10       float64 `json:"psi_some_avg10"`
+	PSIFullAvg10       float64 `json:"psi_full_avg10"`
+	PSIStable          bool    `json:"psi_stable"`
+	MemoryCurrent      uint64  `json:"memory_current_bytes"`
+	MemoryMinBytes     uint64  `json:"memory_min_bytes,omitempty"`
+	MemoryPeakBytes    uint64  `json:"memory_peak_bytes,omitempty"`
+	MemoryStartBytes   uint64  `json:"memory_start_bytes,omitempty"`
+	MemoryEndBytes     uint64  `json:"memory_end_bytes,omitempty"`
+	MemoryGrowthPct    float64 `json:"memory_growth_pct,omitempty"`
+	MemoryStable       bool    `json:"memory_stable"`
+	OOMKillCount       uint64  `json:"oom_kill_count"`
+	WindowSamples      int     `json:"window_samples_checked"`
+	WindowSpanSeconds  int64   `json:"window_span_seconds"`
+	UnitChecked        string  `json:"unit_checked,omitempty"`
+	UnitActive         *bool   `json:"unit_active,omitempty"`
+	ProbeURLChecked    string  `json:"probe_url_checked,omitempty"`
+	ProbeStatusCode    int     `json:"probe_status_code,omitempty"`
 }
 
 // VerifyHealthOutput melaporkan kesimpulan kelulusan evaluasi kesehatan dan jumlah refleks yang di-rollback.
 type VerifyHealthOutput struct {
 	IncidentID         string             `json:"incident_id"`
 	Healthy            bool               `json:"healthy"`
+	State              string             `json:"state,omitempty"`
 	FailureReasons     []string           `json:"failure_reasons,omitempty"`
 	RolledBackReflexes int                `json:"rolled_back_reflexes"`
 	Checks             HealthChecksDetail `json:"checks"`
+}
+
+// PostmortemGenerateInput memuat permintaan pembuatan dokumen markdown postmortem otomatis pasca insiden.
+type PostmortemGenerateInput struct {
+	IncidentID string `json:"incident_id" jsonschema:"ID insiden yang telah ditutup/dievaluasi"`
+	Author     string `json:"author,omitempty" jsonschema:"nama penulis/agen pembuat postmortem (default franken-remediator)"`
+	Notes      string `json:"notes,omitempty" jsonschema:"catatan singkat observasi pemulihan (otomatis disensor)"`
+}
+
+// PostmortemGenerateOutput mengembalikan lokasi berkas dan isi markdown postmortem yang telah disensor.
+type PostmortemGenerateOutput struct {
+	IncidentID   string `json:"incident_id"`
+	FilePath     string `json:"file_path"`
+	State        string `json:"state"`
+	EvidenceUsed int    `json:"evidence_used"`
+	AuditEntries int    `json:"audit_entries"`
+	Markdown     string `json:"markdown"`
 }
 
 func (s *Server) registerWriteTools() {
@@ -163,9 +196,15 @@ func (s *Server) registerWriteTools() {
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "verify_health",
-		Description: "Evaluate server/cgroup PSI, OOM counters, optional unit status, and loopback HTTP health; auto-rolls back L1 reflexes when healthy.",
+		Description: "Evaluate 120s PSI (<5/<1) and RAM stability window, OOM counters, optional unit status, and loopback HTTP health; rolls back L1 reflexes.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false},
 	}, s.handleVerifyHealth)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "postmortem_generate",
+		Description: "Generate a redacted markdown postmortem under incidents/<id>/postmortem.md from incident evidence, reflexes, and audit trail.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false},
+	}, s.handlePostmortemGenerate)
 }
 
 func (s *Server) handlePlanSubmit(ctx context.Context, _ *mcp.CallToolRequest, in PlanSubmitInput) (*mcp.CallToolResult, PlanSubmitOutput, error) {
@@ -702,17 +741,30 @@ func (s *Server) handleVerifyHealth(ctx context.Context, _ *mcp.CallToolRequest,
 	}
 
 	var failures []string
+	psiStable := true
+	memStable := true
+
 	if sample.PSISomeAvg10 >= HealthPSIHalfSomeMax {
+		psiStable = false
 		failures = append(failures, fmt.Sprintf("live psi_some_avg10=%.2f >= %.1f", sample.PSISomeAvg10, HealthPSIHalfSomeMax))
 	}
 	if sample.PSIFullAvg10 >= HealthPSIHalfFullMax {
+		psiStable = false
 		failures = append(failures, fmt.Sprintf("live psi_full_avg10=%.2f >= %.1f", sample.PSIFullAvg10, HealthPSIHalfFullMax))
 	}
+	if sample.MemoryMax > 0 && sample.MemoryCurrent > 0 {
+		utilPct := (float64(sample.MemoryCurrent) / float64(sample.MemoryMax)) * 100.0
+		if utilPct >= MaxCgroupMemoryUtilizationPct {
+			memStable = false
+			failures = append(failures, fmt.Sprintf("live memory utilization=%.1f%% >= %.1f%% of memory.max", utilPct, MaxCgroupMemoryUtilizationPct))
+		}
+	}
 	if in.BaselineOOMKill != nil && sample.Events.OOMKill > *in.BaselineOOMKill {
+		memStable = false
 		failures = append(failures, fmt.Sprintf("new oom_kill detected (%d > baseline %d)", sample.Events.OOMKill, *in.BaselineOOMKill))
 	}
 
-	// Evaluasi pula titik histori ring buffer PSI dalam jendela evaluasi
+	// Evaluasi seluruh titik histori PSI dan stabilitas RAM dalam jendela evaluasi 120 detik
 	now := s.cfg.Clock().UTC()
 	minutes := int(math.Ceil(float64(windowSec) / 60.0))
 	if minutes < 1 {
@@ -722,28 +774,93 @@ func (s *Server) handleVerifyHealth(ctx context.Context, _ *mcp.CallToolRequest,
 		minutes = 10
 	}
 	cutoff := now.Add(-time.Duration(windowSec) * time.Second)
-	var windowSamples int
+	var (
+		windowSamples int
+		firstAt       time.Time
+		lastAt        time.Time
+		memStart      uint64
+		memEnd        uint64
+		memMin        uint64
+		memPeak       uint64
+		memSamples    int
+	)
 	for _, pt := range s.psiRing.Query(normCg, minutes, now) {
 		if pt.At.Before(cutoff) {
 			continue
 		}
 		windowSamples++
+		if firstAt.IsZero() || pt.At.Before(firstAt) {
+			firstAt = pt.At
+		}
+		if lastAt.IsZero() || pt.At.After(lastAt) {
+			lastAt = pt.At
+		}
 		if pt.SomeAvg10 >= HealthPSIHalfSomeMax {
-			failures = append(failures, fmt.Sprintf("window psi_some_avg10=%.2f exceeded %.1f at %s", pt.SomeAvg10, HealthPSIHalfSomeMax, pt.At.Format(time.RFC3339)))
-			break
+			if psiStable {
+				psiStable = false
+				failures = append(failures, fmt.Sprintf("window psi_some_avg10=%.2f exceeded %.1f at %s", pt.SomeAvg10, HealthPSIHalfSomeMax, pt.At.Format(time.RFC3339)))
+			}
 		}
 		if pt.FullAvg10 >= HealthPSIHalfFullMax {
-			failures = append(failures, fmt.Sprintf("window psi_full_avg10=%.2f exceeded %.1f at %s", pt.FullAvg10, HealthPSIHalfFullMax, pt.At.Format(time.RFC3339)))
-			break
+			if psiStable {
+				psiStable = false
+				failures = append(failures, fmt.Sprintf("window psi_full_avg10=%.2f exceeded %.1f at %s", pt.FullAvg10, HealthPSIHalfFullMax, pt.At.Format(time.RFC3339)))
+			}
+		}
+		if pt.MemoryCurrent > 0 {
+			if memSamples == 0 {
+				memStart = pt.MemoryCurrent
+				memMin = pt.MemoryCurrent
+				memPeak = pt.MemoryCurrent
+			} else {
+				if pt.MemoryCurrent < memMin {
+					memMin = pt.MemoryCurrent
+				}
+				if pt.MemoryCurrent > memPeak {
+					memPeak = pt.MemoryCurrent
+				}
+			}
+			memEnd = pt.MemoryCurrent
+			memSamples++
+		}
+	}
+
+	var spanSec int64
+	if !firstAt.IsZero() && !lastAt.IsZero() && !lastAt.Before(firstAt) {
+		spanSec = int64(lastAt.Sub(firstAt).Seconds())
+	}
+
+	var memGrowthPct float64
+	if memSamples >= 2 && memStart > 0 {
+		memGrowthPct = (float64(memEnd) - float64(memStart)) / float64(memStart) * 100.0
+		// Tolak kelulusan bila RAM masih terus menanjak > 15% dibanding baseline jendela pemulihan
+		if memGrowthPct > MaxVerifyMemoryGrowthPct && memEnd >= (memPeak*90)/100 {
+			memStable = false
+			failures = append(failures, fmt.Sprintf("memory unstable during %ds window: grew %.1f%% (%d -> %d bytes)", windowSec, memGrowthPct, memStart, memEnd))
+		}
+	}
+
+	if in.RequireWindowCoverage {
+		minRequiredSpan := int64(float64(windowSec) * 0.8)
+		if windowSamples < 2 || spanSec < minRequiredSpan {
+			failures = append(failures, fmt.Sprintf("insufficient verification window coverage: samples=%d span=%ds (need >= %ds)", windowSamples, spanSec, minRequiredSpan))
 		}
 	}
 
 	details := HealthChecksDetail{
-		PSISomeAvg10:  sample.PSISomeAvg10,
-		PSIFullAvg10:  sample.PSIFullAvg10,
-		MemoryCurrent: sample.MemoryCurrent,
-		OOMKillCount:  sample.Events.OOMKill,
-		WindowSamples: windowSamples,
+		PSISomeAvg10:      sample.PSISomeAvg10,
+		PSIFullAvg10:      sample.PSIFullAvg10,
+		PSIStable:         psiStable,
+		MemoryCurrent:     sample.MemoryCurrent,
+		MemoryMinBytes:    memMin,
+		MemoryPeakBytes:   memPeak,
+		MemoryStartBytes:  memStart,
+		MemoryEndBytes:    memEnd,
+		MemoryGrowthPct:   math.Round(memGrowthPct*100) / 100,
+		MemoryStable:      memStable,
+		OOMKillCount:      sample.Events.OOMKill,
+		WindowSamples:     windowSamples,
+		WindowSpanSeconds: spanSec,
 	}
 
 	if unit := strings.TrimSpace(in.Unit); unit != "" {
@@ -774,8 +891,8 @@ func (s *Server) handleVerifyHealth(ctx context.Context, _ *mcp.CallToolRequest,
 
 	healthy := len(failures) == 0
 	rolledBack := 0
-	if healthy && s.cfg.Reflex != nil {
-		// Sesuai Requirement 9.2: jika verifikasi sehat, rollback seluruh refleks L1 yang masih aktif
+	if s.cfg.Reflex != nil && (healthy || in.AutoTransition) {
+		// Rollback seluruh refleks L1 saat verifikasi lulus maupun saat auto-transition gagal (Requirement 9.2 & 9.3)
 		rbCount, rbErr := s.cfg.Reflex.RollbackIncident(ctx, incID)
 		rolledBack = rbCount
 		if rbErr != nil {
@@ -787,20 +904,76 @@ func (s *Server) handleVerifyHealth(ctx context.Context, _ *mcp.CallToolRequest,
 				IncidentID: incID,
 				Severity:   inc.Severity,
 				State:      string(inc.State),
-				Summary:    fmt.Sprintf("Auto-rolled back %d L1 reflex action(s) after healthy verification", rolledBack),
+				Summary:    fmt.Sprintf("Auto-rolled back %d L1 reflex action(s) during health verification (healthy=%t)", rolledBack, healthy),
 			})
 		}
 	}
 
+	finalState := inc.State
+	if in.AutoTransition {
+		targetState := incident.StateEscalated
+		reason := "verify_health failed: " + strings.Join(failures, "; ")
+		if healthy {
+			targetState = incident.StateResolved
+			reason = fmt.Sprintf("verify_health passed over %ds window (psi_some=%.2f, psi_full=%.2f)", windowSec, sample.PSISomeAvg10, sample.PSIFullAvg10)
+		}
+		if incident.CanTransition(inc.State, targetState) {
+			if trErr := s.cfg.Store.TransitionState(ctx, incID, targetState, "sentinel", reason); trErr == nil {
+				finalState = targetState
+				s.broker.Publish(StreamEvent{
+					Type:       "incident.updated",
+					IncidentID: incID,
+					Severity:   inc.Severity,
+					State:      string(finalState),
+					Summary:    reason,
+				})
+			}
+		}
+	}
+
 	_ = s.cfg.Store.RecordAudit(ctx, incID, "sentinel", "HEALTH_VERIFIED",
-		fmt.Sprintf(`{"healthy":%t,"rolled_back":%d,"psi_some_avg10":%.2f,"oom_kill":%d}`, healthy, rolledBack, sample.PSISomeAvg10, sample.Events.OOMKill))
+		fmt.Sprintf(`{"healthy":%t,"state":%q,"rolled_back":%d,"psi_some_avg10":%.2f,"psi_full_avg10":%.2f,"mem_growth_pct":%.2f,"oom_kill":%d}`,
+			healthy, string(finalState), rolledBack, sample.PSISomeAvg10, sample.PSIFullAvg10, details.MemoryGrowthPct, sample.Events.OOMKill))
 
 	return nil, VerifyHealthOutput{
 		IncidentID:         incID,
 		Healthy:            healthy,
+		State:              string(finalState),
 		FailureReasons:     failures,
 		RolledBackReflexes: rolledBack,
 		Checks:             details,
+	}, nil
+}
+
+func (s *Server) handlePostmortemGenerate(ctx context.Context, _ *mcp.CallToolRequest, in PostmortemGenerateInput) (*mcp.CallToolResult, PostmortemGenerateOutput, error) {
+	incID := strings.TrimSpace(in.IncidentID)
+	if incID == "" {
+		return nil, PostmortemGenerateOutput{}, errors.New("incident_id is required")
+	}
+
+	outDir := strings.TrimSpace(s.cfg.PostmortemDir)
+	if outDir == "" {
+		outDir = "incidents"
+	}
+
+	doc, err := postmortem.GenerateAndWrite(ctx, s.cfg.Store, postmortem.Options{
+		IncidentID: incID,
+		OutputDir:  outDir,
+		Author:     strings.TrimSpace(in.Author),
+		Notes:      strings.TrimSpace(in.Notes),
+		Clock:      s.cfg.Clock,
+	})
+	if err != nil {
+		return nil, PostmortemGenerateOutput{}, err
+	}
+
+	return nil, PostmortemGenerateOutput{
+		IncidentID:   doc.IncidentID,
+		FilePath:     doc.FilePath,
+		State:        doc.State,
+		EvidenceUsed: doc.EvidenceUsed,
+		AuditEntries: doc.AuditEntries,
+		Markdown:     doc.Markdown,
 	}, nil
 }
 

@@ -1,8 +1,8 @@
 {
   "name": "franken-remediator",
-  "description": "Approved Level 2 executor and post-remediation verifier requiring a signed Ed25519 approval token and 120s PSI recovery confirmation.",
+  "description": "Human-approved Level 2 executor, 120s PSI/RAM health verifier, and automated postmortem writer.",
   "model": "claude-sonnet-4",
-  "prompt": "You are Franken-Remediator. Execute ONLY human-approved Level 2 remediation steps via @franken-sentinel/action_execute using the exact single-use Ed25519 approval_token, incident_id, and plan_hash issued by wa-bridge. Never attempt L3 actions or touch protected units (PID 1, sshd, sentinel, tailscaled). If execution worsens pressure or fails, call @franken-sentinel/action_rollback and escalate. Otherwise invoke @franken-sentinel/verify_health until psi_some_avg10 < 5.0 and psi_full_avg10 < 1.0 hold before resolving the incident.",
+  "prompt": "You are Franken-Remediator. For a validated PLANNED incident containing L2 steps, request human vote via @franken-wa/wa_request_approval (up to 3 options; Dismiss added automatically) and block on @franken-wa/wa_await_decision. If GRANTED, execute the single approved L2 step via @franken-sentinel/action_execute passing the exact single-use Ed25519 approval_token. Never forge, widen, or replay tokens, never attempt L3 actions, and never touch protected units (PID 1, sshd, sentinel, wa-bridge, tailscaled). After execution, invoke @franken-sentinel/verify_health with window_seconds=120 and auto_transition=true so Sentinel verifies PSI (some_avg10 < 5.0, full_avg10 < 1.0) and RAM stability, rolls back active L1 reflexes, and moves to RESOLVED or ESCALATED. Always finish terminal incidents by calling @franken-sentinel/postmortem_generate and notifying the operator with @franken-wa/wa_send_report.",
   "tools": [
     "@franken-sentinel/node_snapshot",
     "@franken-sentinel/incident_get",
@@ -10,7 +10,12 @@
     "@franken-sentinel/action_execute",
     "@franken-sentinel/action_rollback",
     "@franken-sentinel/incident_transition",
-    "@franken-sentinel/verify_health"
+    "@franken-sentinel/verify_health",
+    "@franken-sentinel/postmortem_generate",
+    "@franken-wa/wa_notify",
+    "@franken-wa/wa_request_approval",
+    "@franken-wa/wa_await_decision",
+    "@franken-wa/wa_send_report"
   ],
   "permissions": {
     "rules": [
@@ -31,6 +36,26 @@
         "tool": "@franken-sentinel/verify_health"
       },
       {
+        "action": "allow",
+        "tool": "@franken-sentinel/postmortem_generate"
+      },
+      {
+        "action": "allow",
+        "tool": "@franken-wa/wa_notify"
+      },
+      {
+        "action": "allow",
+        "tool": "@franken-wa/wa_request_approval"
+      },
+      {
+        "action": "allow",
+        "tool": "@franken-wa/wa_await_decision"
+      },
+      {
+        "action": "allow",
+        "tool": "@franken-wa/wa_send_report"
+      },
+      {
         "action": "deny",
         "tool": "execute_bash"
       }
@@ -38,15 +63,19 @@
   },
   "mcpServers": {
     "franken-sentinel": {
-      "command": "go",
+      "command": "franken",
       "args": [
-        "run",
-        "./cmd/franken",
         "mcp",
         "connect",
         "sentinel@localhost",
         "--token-env",
         "FRANKEN_BEARER_TOKEN"
+      ]
+    },
+    "franken-wa": {
+      "command": "wa-bridge",
+      "args": [
+        "mcp"
       ]
     }
   },
@@ -55,12 +84,18 @@
       {
         "matcher": "@franken-sentinel/*",
         "command": "franken guard --audit"
+      },
+      {
+        "matcher": "@franken-wa/*",
+        "command": "franken guard --audit"
       }
     ]
   },
   "resources": [
     "file://.kiro/steering/rules.md",
     "file://.kiro/steering/incident-response.md",
+    "file://.kiro/skills/remediation-runbooks/SKILL.md",
+    "file://.kiro/skills/incident-spec-writer/SKILL.md",
     "file://policy/actions.yaml"
   ]
 }

@@ -1,0 +1,17 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Pre-Tool Audit Logging & Safety Guard",
+      "description": "Audit every MCP tool payload (redacted) before execution via franken guard --audit and block raw_shell, L3 actions, PID 1/protected units, or L2 mutations lacking an Ed25519 approval_token with exit code 2.",
+      "enabled": true,
+      "trigger": "PreToolUse",
+      "matcher": "*",
+      "action": {
+        "type": "command",
+        "command": "franken guard --audit"
+      }
+    }
+  ]
+}
+

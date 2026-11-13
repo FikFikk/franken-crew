@@ -51,7 +51,8 @@
 | `action_execute`      | L1/L2 | `incident_id`, `step_id`, `approval_token?` | exit code, durasi, stderr terredaksi       | L2 tanpa token valid ditolak; proses terlindungi selalu ditolak |
 | `action_rollback`     | L1    | `reflex_id`                                 | status rollback                            | —                                                               |
 | `incident_transition` | L0    | `incident_id`, `to`, `reason`               | state baru                                 | Hanya transisi legal                                            |
-| `verify_health`       | L0    | `incident_id`, `window_s = 120`             | `healthy`, detail cek                      | Sukses → rollback reflex otomatis                               |
+| `verify_health`       | L0    | `incident_id`, `window_seconds = 120`, `require_window_coverage?`, `auto_transition?` | `healthy`, `checks` (PSI < 5/1 & stabilitas RAM), `rolled_back_reflexes` | Lulus → rollback refleks + opsional `RESOLVED`; gagal + `auto_transition` → rollback refleks + `ESCALATED` |
+| `postmortem_generate` | L0    | `incident_id`, `author?`, `notes?`                                                  | `file_path`, `state`, `markdown` terdiredaksi                            | Menulis berkas aman ke `incidents/<incident_id>/postmortem.md` & mencatat audit `POSTMORTEM_GENERATED`    |
 
 ### 1.2 CLI `franken` (`cmd/franken`)
 
@@ -64,6 +65,8 @@
 | `franken mcp connect <target>` | `--token-env`, `--timeout`, `--allow-insecure-remote`                                                               | Proxy `stdin`/`stdout` JSON-RPC ke endpoint HTTP `/mcp` (`sentinel@host` / URL) dengan header `Bearer` & `Mcp-Session-Id` | Menolak HTTP polos non-privat/non-Tailscale                                                                                                                                           |
 | `franken guard`                | `--audit`, `--db`, `--policy`, `--payload`                                                                          | Validator `PreToolUse` untuk memblokir `raw_shell`/L3, PID 1, unit terlindungi, dan L2 tanpa `approval_token`             | `0` diizinkan · `2` diblokir (konvensi hook Kiro; jalankan binary terkompilasi `franken`, bukan `go run` yang membungkus exit code non-zero menjadi `1`) · menyimpan audit terredaksi |
 | `franken wa-login`             | `--db`, `--relogin`, `--timeout`                                                                                    | Login awal perangkat WhatsApp via terminal QR code ke session SQLite `modernc.org/sqlite`                                 | `0` paired · `1` error · `2` argumen tidak valid                                                                                                                                      |
+| `franken postmortem`           | `--db`, `--incident`, `--out`, `--author`, `--notes`                                                                | Generate laporan markdown postmortem terredaksi dari SQLite Sentinel                                                      | `0` tersimpan · `1` gagal · `2` argumen tidak valid                                                                                                                                   |
+| `franken chaos run`            | `--runs`, `--policy`, `--out`, `--node`, `--approver`                                                               | Jalankan 20 siklus chaos (`memory_leak`, `memory_spike`, `fork_storm`, `zombie_storm`, `log_flood`) end-to-end            | `0` seluruh siklus lulus `RESOLVED` · `1` ada kegagalan                                                                                                                               |
 
 ## 2. wa-bridge (`cmd/wa-bridge` + `internal/wabridge`)
 
@@ -140,7 +143,7 @@
 
 | Command                         | Frekuensi                 | Tujuan                                                                        | Side effect                                                                 |
 | ------------------------------- | ------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Kiro Crew cron `incident-sweep` | `* * * * *`               | Klaim incident terbuka lalu jalankan pipeline Sentry → Architect → Remediator | Menulis `incidents/<id>/*`, mengirim poll WA, mengeksekusi aksi tervalidasi |
-| Kiro Crew cron `morning-digest` | `0 7 * * *` (waktu lokal) | Ringkasan incident P3 dan statistik 24 jam                                    | Satu pesan WA per node                                                      |
+| Kiro Crew cron `incident-sweep` (`.kiro/crons/incident-sweep.json`) | `* * * * *`               | Klaim incident terbuka lalu jalankan pipeline Sentry → Architect → Remediator | Menulis `incidents/<id>/*`, mengirim poll WA, mengeksekusi aksi tervalidasi |
+| Kiro Crew cron `morning-digest` (`.kiro/crons/morning-digest.json`) | `0 7 * * *` (waktu lokal) | Ringkasan incident P3 dan statistik 24 jam                                    | Satu pesan WA per node                                                      |
 | Timer internal wa-bridge        | Setiap 15 s               | Cek heartbeat Sentinel                                                        | Alert `node silent` setelah 3 kali gagal                                    |
 | Timer internal Sentinel         | Per TTL reflex            | Rollback aksi L1                                                              | Mengembalikan `MemoryHigh` / admission                                      |

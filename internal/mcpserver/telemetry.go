@@ -41,15 +41,16 @@ var (
 	ErrInvalidProbeURL = errors.New("mcpserver: http health probe URL must target localhost or loopback address")
 )
 
-// PSIPoint merepresentasikan satu titik sampel metrik tekanan PSI pada seri waktu.
+// PSIPoint merepresentasikan satu titik sampel metrik tekanan PSI dan pemakaian RAM cgroup pada seri waktu.
 type PSIPoint struct {
-	At         time.Time `json:"at"`
-	SomeAvg10  float64   `json:"some_avg10"`
-	SomeAvg60  float64   `json:"some_avg60"`
-	SomeAvg300 float64   `json:"some_avg300"`
-	FullAvg10  float64   `json:"full_avg10"`
-	FullAvg60  float64   `json:"full_avg60"`
-	FullAvg300 float64   `json:"full_avg300"`
+	At            time.Time `json:"at"`
+	SomeAvg10     float64   `json:"some_avg10"`
+	SomeAvg60     float64   `json:"some_avg60"`
+	SomeAvg300    float64   `json:"some_avg300"`
+	FullAvg10     float64   `json:"full_avg10"`
+	FullAvg60     float64   `json:"full_avg60"`
+	FullAvg300    float64   `json:"full_avg300"`
+	MemoryCurrent uint64    `json:"memory_current_bytes,omitempty"`
 }
 
 // PSIRingBuffer menyimpan histori metrik PSI berkapasitas tetap di memori untuk tool `psi_history` dan `verify_health`.

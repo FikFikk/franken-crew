@@ -301,3 +301,25 @@ func TestCLI_WALoginValidation(t *testing.T) {
 	}
 }
 
+func TestCLI_PostmortemAndChaosCommands(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	// 1. Uji postmortem tanpa --incident -> exit code 2
+	code := run([]string{"postmortem"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit code 2 for missing --incident, got %d", code)
+	}
+
+	// 2. Uji chaos run 5 skenario lengkap lewat CLI franken chaos run
+	stdout.Reset()
+	stderr.Reset()
+	outDir := filepath.Join(t.TempDir(), "chaos-out")
+	code = run([]string{"chaos", "run", "--runs", "5", "--policy", filepath.Join("..", "..", "policy", "actions.yaml"), "--out", outDir}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected franken chaos run exit 0, got %d (stdout=%s stderr=%s)", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Summary: passed=5/5 failed=0") {
+		t.Errorf("unexpected chaos CLI output: %s", stdout.String())
+	}
+}
+

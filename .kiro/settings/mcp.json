@@ -1,10 +1,8 @@
 {
   "mcpServers": {
     "franken-sentinel": {
-      "command": "go",
+      "command": "franken",
       "args": [
-        "run",
-        "./cmd/franken",
         "mcp",
         "connect",
         "sentinel@localhost",
@@ -25,7 +23,20 @@
         "process_tree",
         "zombie_report"
       ]
+    },
+    "franken-wa": {
+      "command": "wa-bridge",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "FRANKEN_BEARER_TOKEN": "${FRANKEN_BEARER_TOKEN}"
+      },
+      "disabled": false,
+      "autoApprove": [
+        "wa_notify",
+        "wa_send_report"
+      ]
     }
   }
 }
-

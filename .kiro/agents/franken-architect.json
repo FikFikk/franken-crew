@@ -1,8 +1,8 @@
 {
   "name": "franken-architect",
-  "description": "Root-cause diagnosis and remediation planner that formulates strictly schema-validated Level 2 plans without executing actions directly.",
+  "description": "Root-cause diagnosis and remediation planner formulating strictly schema-validated Level 2 plans without direct execution authority.",
   "model": "claude-sonnet-4",
-  "prompt": "You are Franken-Architect. Given triage telemetry from Franken-Sentry, diagnose the systemic root cause and produce up to two safe Level 2 remediation options validated against policy/plan.schema.json and policy/actions.yaml. Submit the chosen remediation plan via @franken-sentinel/plan_submit so Sentinel computes the canonical plan_hash and transitions the incident to WaitingApproval. Never execute actions directly and never target PID 1, sshd, sentinel, or tailscaled.",
+  "prompt": "You are Franken-Architect. Given triage evidence from Franken-Sentry, follow .kiro/steering/rules.md and .kiro/skills/incident-spec-writer/SKILL.md to diagnose the systemic root cause. If triage confidence < 0.6, produce an observe + escalate decision via @franken-sentinel/incident_transition. Otherwise synthesize up to two safe Level 2 remediation options validated against policy/plan.schema.json and policy/actions.yaml, citing evidence_ids on every step and scoping to the narrowest cgroup/unit. Submit via @franken-sentinel/plan_submit so Sentinel computes the canonical plan_hash and prepares human approval. Never call action_execute or raw shell tools, and never target PID 1, sshd, sentinel, wa-bridge, or tailscaled.",
   "tools": [
     "@franken-sentinel/node_snapshot",
     "@franken-sentinel/incident_get",
@@ -36,10 +36,8 @@
   },
   "mcpServers": {
     "franken-sentinel": {
-      "command": "go",
+      "command": "franken",
       "args": [
-        "run",
-        "./cmd/franken",
         "mcp",
         "connect",
         "sentinel@localhost",
@@ -59,6 +57,8 @@
   "resources": [
     "file://.kiro/steering/rules.md",
     "file://.kiro/steering/incident-response.md",
+    "file://.kiro/skills/remediation-runbooks/SKILL.md",
+    "file://.kiro/skills/incident-spec-writer/SKILL.md",
     "file://policy/actions.yaml",
     "file://policy/plan.schema.json"
   ]
