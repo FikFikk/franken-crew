@@ -168,7 +168,110 @@ func OpenWhatsAppClientWithWriter(ctx context.Context, dbPath string, logLevel s
 	return client, container, nil
 }
 
-// LoginWithQR menautkan sesi WhatsApp pertama kali dengan merender QR code langsung ke terminal.
+const (
+	// DefaultLoginTimeout melampaui seluruh siklus 6 QR code whatsmeow (160 detik) plus jendela handshake pasca-515.
+	DefaultLoginTimeout        = 3 * time.Minute
+	defaultPostPairConnectWait = 35 * time.Second
+	defaultPostPairSyncSettle  = 5 * time.Second
+)
+
+// postPairSignals menampung kanal event lifecycle pasca-PairSuccess dari whatsmeow.
+type postPairSignals struct {
+	connected      <-chan struct{}
+	offlineSynced  <-chan struct{}
+	pairErr        <-chan error
+	loggedOut      <-chan string
+	connectFailure <-chan string
+	clientOutdated <-chan struct{}
+}
+
+// signalNonBlocking mengirim sinyal ke kanal berbuffer-1 tanpa memblokir goroutine dispatcher whatsmeow.
+func signalNonBlocking(ch chan<- struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
+// sendValueNonBlocking mengirim nilai ke kanal berbuffer-1 tanpa memblokir goroutine dispatcher whatsmeow.
+func sendValueNonBlocking[T any](ch chan<- T, val T) {
+	select {
+	case ch <- val:
+	default:
+	}
+}
+
+// waitForPostPairSession menunggu reconnect stream 515, upload prekeys (`*events.Connected`),
+// dan sinkronisasi awal WhatsApp sebelum sesi pairing ditutup agar ponsel tidak menganggap tautan gagal.
+func waitForPostPairSession(ctx context.Context, out io.Writer, connectWait, syncSettle time.Duration, sigs postPairSignals) error {
+	if connectWait <= 0 {
+		connectWait = defaultPostPairConnectWait
+	}
+	connectTimer := time.NewTimer(connectWait)
+	defer connectTimer.Stop()
+
+	connected := false
+	for !connected {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case pErr := <-sigs.pairErr:
+			if pErr != nil {
+				return fmt.Errorf("whatsapp post-pair handshake failed: %w", pErr)
+			}
+		case reason := <-sigs.loggedOut:
+			return fmt.Errorf("whatsapp session logged out during pairing (%s)", reason)
+		case reason := <-sigs.connectFailure:
+			return fmt.Errorf("whatsapp post-pair reconnect rejected (%s)", reason)
+		case <-sigs.clientOutdated:
+			return errors.New("whatsapp client version rejected as outdated (405) during post-pair reconnect")
+		case <-sigs.connected:
+			// Di whatsmeow, *events.Connected dikirim tepat setelah 515 reconnect, uploadPreKeys, dan SetPassive(false) selesai.
+			connected = true
+		case <-connectTimer.C:
+			return errors.New("timed out waiting for WhatsApp 515 reconnect and prekey upload completion")
+		}
+	}
+
+	if out != nil {
+		fmt.Fprintln(out, "Sesi terautentikasi dan prekey terunggah; menunggu sinkronisasi awal perangkat...")
+	}
+	if syncSettle <= 0 {
+		return nil
+	}
+
+	// Beri jeda singkat agar OfflineSyncCompleted dan ACK app-state tuntas sebelum Disconnect().
+	settleTimer := time.NewTimer(syncSettle)
+	defer settleTimer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case reason := <-sigs.loggedOut:
+		return fmt.Errorf("whatsapp session logged out after connect (%s)", reason)
+	case <-sigs.offlineSynced:
+		// Tunggu sebentar agar write SQLite & balasan ACK terakhir ikut ter-flush.
+		ackTimer := time.NewTimer(minDuration(time.Second, syncSettle))
+		defer ackTimer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ackTimer.C:
+		}
+	case <-settleTimer.C:
+	}
+	return nil
+}
+
+func minDuration(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// LoginWithQR menautkan sesi WhatsApp pertama kali dengan merender QR code langsung ke terminal
+// lalu menunggu reconnect 515 serta upload prekeys selesai penuh.
 func LoginWithQR(ctx context.Context, dbPath string, out io.Writer, forceRelogin bool) (types.JID, error) {
 	if out == nil {
 		out = os.Stdout
@@ -193,12 +296,29 @@ func LoginWithQR(ctx context.Context, dbPath string, out io.Writer, forceRelogin
 	}
 
 	pairedCh := make(chan types.JID, 1)
+	connectedCh := make(chan struct{}, 1)
+	offlineSyncedCh := make(chan struct{}, 1)
+	pairErrCh := make(chan error, 1)
+	loggedOutCh := make(chan string, 1)
+	connectFailCh := make(chan string, 1)
+	clientOutdatedCh := make(chan struct{}, 1)
+
 	client.AddEventHandler(func(evt any) {
-		if ps, ok := evt.(*events.PairSuccess); ok {
-			select {
-			case pairedCh <- ps.ID.ToNonAD():
-			default:
-			}
+		switch e := evt.(type) {
+		case *events.PairSuccess:
+			sendValueNonBlocking(pairedCh, e.ID.ToNonAD())
+		case *events.PairError:
+			sendValueNonBlocking(pairErrCh, e.Error)
+		case *events.Connected:
+			signalNonBlocking(connectedCh)
+		case *events.OfflineSyncCompleted:
+			signalNonBlocking(offlineSyncedCh)
+		case *events.LoggedOut:
+			sendValueNonBlocking(loggedOutCh, e.Reason.String())
+		case *events.ConnectFailure:
+			sendValueNonBlocking(connectFailCh, fmt.Sprintf("%s (%s)", e.Reason.String(), e.Message))
+		case *events.ClientOutdated:
+			signalNonBlocking(clientOutdatedCh)
 		}
 	})
 
@@ -211,14 +331,16 @@ func LoginWithQR(ctx context.Context, dbPath string, out io.Writer, forceRelogin
 		return types.EmptyJID, fmt.Errorf("connect whatsapp client: %w", err)
 	}
 
-	for {
+	pairedJID := types.EmptyJID
+	for pairedJID.IsEmpty() {
 		select {
 		case <-ctx.Done():
 			return types.EmptyJID, ctx.Err()
 		case item, ok := <-qrChan:
 			if !ok {
 				if client.Store.ID != nil {
-					return client.Store.ID.ToNonAD(), nil
+					pairedJID = client.Store.ID.ToNonAD()
+					break
 				}
 				return types.EmptyJID, errors.New("whatsapp QR channel closed before pairing completed")
 			}
@@ -229,12 +351,12 @@ func LoginWithQR(ctx context.Context, dbPath string, out io.Writer, forceRelogin
 			case "success":
 				select {
 				case jid := <-pairedCh:
-					return jid, nil
+					pairedJID = jid
 				case <-time.After(2 * time.Second):
-					if client.Store.ID != nil {
-						return client.Store.ID.ToNonAD(), nil
+					if client.Store.ID == nil {
+						return types.EmptyJID, errors.New("whatsapp QR pairing signaled success without stored device ID")
 					}
-					return types.EmptyJID, nil
+					pairedJID = client.Store.ID.ToNonAD()
 				}
 			case "timeout":
 				return types.EmptyJID, errors.New("whatsapp QR pairing timed out")
@@ -245,6 +367,19 @@ func LoginWithQR(ctx context.Context, dbPath string, out io.Writer, forceRelogin
 			}
 		}
 	}
+
+	fmt.Fprintf(out, "QR dipindai (%s); menunggu reconnect 515 & upload prekeys WhatsApp...\n", pairedJID.String())
+	if err := waitForPostPairSession(ctx, out, defaultPostPairConnectWait, defaultPostPairSyncSettle, postPairSignals{
+		connected:      connectedCh,
+		offlineSynced:  offlineSyncedCh,
+		pairErr:        pairErrCh,
+		loggedOut:      loggedOutCh,
+		connectFailure: connectFailCh,
+		clientOutdated: clientOutdatedCh,
+	}); err != nil {
+		return types.EmptyJID, err
+	}
+	return pairedJID, nil
 }
 
 // WhatsmeowMessenger adalah implementasi produksi Messenger di atas `*whatsmeow.Client`.

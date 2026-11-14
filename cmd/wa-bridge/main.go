@@ -132,7 +132,7 @@ func runLogin(args []string, stdout, stderr io.Writer) int {
 
 	dbPath := fs.String("db", "wa-bridge-session.db", "path to pure-Go modernc SQLite whatsmeow session DB")
 	relogin := fs.Bool("relogin", false, "wipe any existing device session and pair a new QR code")
-	timeout := fs.Duration("timeout", 2*time.Minute, "QR pairing timeout")
+	timeout := fs.Duration("timeout", wabridge.DefaultLoginTimeout, "QR pairing and post-pair handshake timeout")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
