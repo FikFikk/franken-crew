@@ -1,5 +1,5 @@
-// Halaman landing FrankenCrew: tab instalasi, badge Sentinel live, angka metrik hero, dan mount Graveyard.
-// Dimuat sebagai modul ES dari index.html (CSP melarang inline script).
+// Halaman landing FrankenCrew: navigasi mobile, tab instalasi, badge Sentinel live, metrik hero, dan mount Graveyard.
+// Dimuat sebagai modul ES dari index.html (CSP melarang inline script). Semua komentar wajib Bahasa Indonesia.
 
 import { mount, loadReplay, summarize } from '../dist/index.mjs';
 
@@ -10,13 +10,47 @@ const STATUS_URL = new URL('api/status', base).href;
 const DATA_URL = new URL('data/replay.json', base).href;
 const STATUS_EVERY_MS = 15000;
 
+// Format durasi milidetik secara konsisten untuk panel statistik
 function fmtMs(ms) {
-  if (!Number.isFinite(ms)) return '–';
+  if (!Number.isFinite(ms)) return '--';
   if (ms < 1) return `${ms.toFixed(2)} ms`;
   if (ms < 10) return `${ms.toFixed(1)} ms`;
   return `${Math.round(ms)} ms`;
 }
 
+// Menutup menu drawer mobile saat tautan diklik, Escape ditekan, atau layar diperlebar
+function initMobileNav() {
+  const drawer = $('#nav-drawer');
+  if (!drawer) return;
+  const summary = $('summary', drawer);
+
+  const closeDrawer = (restoreFocus) => {
+    if (!drawer.open) return;
+    drawer.open = false;
+    if (restoreFocus && summary) summary.focus();
+  };
+
+  for (const link of $$('.drawer-panel a', drawer)) {
+    link.addEventListener('click', () => closeDrawer(false));
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeDrawer(true);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (drawer.open && !drawer.contains(e.target)) closeDrawer(false);
+  });
+
+  const mq = window.matchMedia('(min-width: 1024px)');
+  if (typeof mq.addEventListener === 'function') {
+    mq.addEventListener('change', (e) => {
+      if (e.matches) closeDrawer(false);
+    });
+  }
+}
+
+// Mengatur interaksi tab instalasi CLI dengan dukungan keyboard penuh
 function initTabs() {
   for (const group of $$('[data-tabs]')) {
     const tabs = $$('[role="tab"]', group);
@@ -42,6 +76,7 @@ function initTabs() {
   }
 }
 
+// Menyalin perintah dari tab aktif ke clipboard dengan fallback execCommand
 async function writeClipboard(text) {
   try {
     await navigator.clipboard.writeText(text);
@@ -63,6 +98,7 @@ async function writeClipboard(text) {
   }
 }
 
+// Menangani tombol Copy pada dok instalasi CLI
 function initCopy() {
   for (const btn of $$('[data-copy]')) {
     let timer = 0;
@@ -70,7 +106,7 @@ function initCopy() {
       const code = $('[role="tabpanel"]:not([hidden]) code', btn.closest('[data-tabs]') || document);
       if (!code) return;
       const ok = await writeClipboard(code.textContent.trim());
-      btn.textContent = ok ? 'Copied' : 'Press Ctrl+C';
+      btn.textContent = ok ? 'Copied' : 'Ctrl+C';
       btn.classList.toggle('done', ok);
       if (!ok) getSelection()?.selectAllChildren(code);
       clearTimeout(timer);
@@ -82,6 +118,7 @@ function initCopy() {
   }
 }
 
+// Memantau status konektivitas Sentinel setiap 15 detik saat tab aktif
 function initStatus() {
   const el = $('#status');
   if (!el) return;
@@ -104,7 +141,7 @@ function initStatus() {
         if (st.mode === 'live') {
           const psi = Number(st.psi?.some_avg10);
           const open = Number(st.open_incidents) || 0;
-          set('live', `Live · ${st.node || 'sentinel'} · PSI ${Number.isFinite(psi) ? psi.toFixed(1) : '–'}% · ${open} open`,
+          set('live', `Live · ${st.node || 'sentinel'} · PSI ${Number.isFinite(psi) ? psi.toFixed(1) : '--'}% · ${open} open`,
             `Sentinel reachable. Updated ${st.updated_at || 'just now'}.`);
         } else if (st.mode === 'offline') {
           set('offline', 'Sentinel offline', 'This dashboard is wired to a Sentinel but cannot reach it right now.');
@@ -125,11 +162,13 @@ function initStatus() {
   tick();
 }
 
+// Memformat stempel waktu relatif T-mm:ss / T+mm:ss dengan tanda hubung ASCII
 function rel(t) {
   const a = Math.abs(Math.round(t));
-  return `T${Math.round(t) < 0 ? '−' : '+'}${Math.floor(a / 60)}:${String(a % 60).padStart(2, '0')}`;
+  return `T${Math.round(t) < 0 ? '-' : '+'}${Math.floor(a / 60)}:${String(a % 60).padStart(2, '0')}`;
 }
 
+// Mengisi panel KPI 2x2 dari ringkasan dataset replay
 function fillStats(sum) {
   const put = (key, value) => {
     const el = $(`[data-stat="${key}"]`);
@@ -147,53 +186,94 @@ function fillStats(sum) {
 
 const TEASER_KINDS = ['psi.rising', 'incident.opened', 'reflex.applied', 'plan.accepted', 'vote.granted', 'action.executed', 'incident.resolved', 'incident.escalated'];
 
-function fillTeaser(replay) {
-  const box = $('#teaser');
-  const inc = replay.incidents[0];
-  if (!box || !inc) return;
-  const put = (key, value) => {
-    const el = $(`[data-teaser="${key}"]`, box);
-    if (el) el.textContent = value;
-  };
-  put('state', inc.state);
-  $('[data-teaser="state"]', box).classList.toggle('bad', inc.state !== 'RESOLVED');
-  put('id', inc.id);
-  put('title', inc.title);
-  const log = $('[data-teaser="log"]', box);
-  const picked = inc.events.filter((e) => !e.inferred && TEASER_KINDS.includes(e.kind)).slice(0, 7);
-  log.replaceChildren(...picked.map((e, i) => {
-    const li = document.createElement('li');
-    li.className = e.lane;
-    li.style.animationDelay = `${120 * i}ms`;
-    const time = Object.assign(document.createElement('time'), { textContent: rel(e.t) });
-    const line = document.createElement('span');
-    const who = Object.assign(document.createElement('b'), { textContent: e.actor });
-    line.append(who, ` ${e.title}`);
-    li.append(time, line);
-    return li;
-  }));
-  const kind = replay.source?.kind === 'recording' ? 'Recorded' : 'Simulated';
-  put('foot', `${kind} on ${replay.node || 'unknown node'} · ${inc.events.length} events · full replay below`);
-  box.hidden = false;
+// Helper aman untuk memperbarui teks elemen teaser
+function setTeaserField(box, key, value) {
+  const el = $(`[data-teaser="${key}"]`, box);
+  if (el) el.textContent = value;
 }
 
+// Menampilkan kondisi kosong atau galat pada panel pratinjau konsol
+function fillTeaserFallback(kind, message) {
+  const box = $('#teaser');
+  if (!box) return;
+  box.dataset.uiState = kind;
+  const badge = $('[data-teaser="state"]', box);
+  if (badge) {
+    badge.classList.toggle('bad', kind === 'error');
+    badge.textContent = kind === 'error' ? 'UNAVAILABLE' : 'EMPTY';
+  }
+  setTeaserField(box, 'id', 'data/replay.json');
+  setTeaserField(box, 'title', kind === 'error' ? 'Replay dataset unavailable' : 'No incidents in dataset');
+  const log = $('[data-teaser="log"]', box);
+  if (log) {
+    const li = document.createElement('li');
+    const time = Object.assign(document.createElement('time'), { textContent: '00:00' });
+    const line = document.createElement('span');
+    const who = Object.assign(document.createElement('b'), { textContent: 'franken' });
+    line.append(who, ` ${message}`);
+    li.append(time, line);
+    log.replaceChildren(li);
+  }
+  setTeaserField(box, 'foot', 'Inspect options inside the Graveyard below');
+}
+
+// Mengisi pratinjau konsol insiden terbaru dari dataset replay
+function fillTeaser(replay) {
+  const box = $('#teaser');
+  const inc = replay.incidents?.[0];
+  if (!box || !inc) {
+    fillTeaserFallback('empty', 'Run franken lab simulate --out ui/data/replay.json to populate traces.');
+    return;
+  }
+  box.dataset.uiState = 'ready';
+  setTeaserField(box, 'state', inc.state);
+  const badge = $('[data-teaser="state"]', box);
+  if (badge) badge.classList.toggle('bad', inc.state !== 'RESOLVED');
+  setTeaserField(box, 'id', inc.id);
+  setTeaserField(box, 'title', inc.title);
+  const log = $('[data-teaser="log"]', box);
+  if (log) {
+    const picked = inc.events.filter((e) => !e.inferred && TEASER_KINDS.includes(e.kind)).slice(0, 7);
+    log.replaceChildren(...picked.map((e) => {
+      const li = document.createElement('li');
+      li.className = e.lane;
+      const time = Object.assign(document.createElement('time'), { textContent: rel(e.t) });
+      const line = document.createElement('span');
+      const who = Object.assign(document.createElement('b'), { textContent: e.actor });
+      line.append(who, ` ${e.title}`);
+      li.append(time, line);
+      return li;
+    }));
+  }
+  const kind = replay.source?.kind === 'recording' ? 'Recorded' : 'Simulated';
+  setTeaserField(box, 'foot', `${kind} on ${replay.node || 'unknown node'} · ${inc.events.length} events · full replay below`);
+}
+
+// Memuat replay dari server dan me-mount simulator Graveyard
 async function initGraveyard() {
   const target = $('#graveyard-app');
   if (!target) return;
   let replay = null;
+  let failed = false;
   try {
     replay = await loadReplay(DATA_URL);
   } catch (err) {
+    failed = true;
     console.warn('[FrankenCrew] replay data unavailable:', err);
   }
   if (replay) {
     fillStats(summarize(replay));
     fillTeaser(replay);
+  } else if (failed) {
+    fillTeaserFallback('error', 'Failed to load data/replay.json; check the Graveyard simulator below.');
+    const srcNote = $('[data-stat="source"]');
+    if (srcNote) srcNote.textContent = 'Replay dataset could not be fetched from data/replay.json.';
   }
   // Tanpa data eksternal, komponen merender empty state dan cara membuat dataset replay.
   mount(target, replay ? { replay, dataUrl: DATA_URL } : { dataUrl: DATA_URL });
 }
 
+initMobileNav();
 initTabs();
 initCopy();
 initStatus();

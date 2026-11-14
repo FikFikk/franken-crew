@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FrankenCrew — Resilient Linux Kernel Sentry &amp; Human-Signed Recovery</title>
-  <meta name="description" content="A Go kernel Sentinel with reversible reflexes inside a 250 ms budget, a Kiro Crew of 4 AI agents for forensic planning, and a single-use Ed25519 WhatsApp poll that keeps a human in charge. Explore live replays in the Graveyard simulator.">
+  <title>FrankenCrew: Resilient Linux Kernel Sentry &amp; Human-Signed Recovery</title>
+  <meta name="description" content="A pure-Go kernel Sentinel with reversible reflexes inside a 250 ms budget, a 4-agent Kiro Crew for forensic triage, and single-use Ed25519 WhatsApp polls that keep a human in charge.">
   <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#06080d">
+  <meta name="theme-color" content="#071018">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="FrankenCrew — Resilient System &amp; Auto Monitor">
-  <meta property="og:description" content="Sub-250 ms Go kernel reflexes, 4-agent Kiro Crew orchestration, and Ed25519 human approval over WhatsApp for small Linux servers.">
+  <meta property="og:title" content="FrankenCrew: Resilient System &amp; Auto Monitor">
+  <meta property="og:description" content="Sub-250 ms Go kernel reflexes, 4-agent Kiro Crew orchestration, and Ed25519 human approval over WhatsApp for constrained Linux servers.">
   <meta property="og:url" content="https://frankencrew.fikfikk.my.id/">
   <meta property="og:image" content="https://frankencrew.fikfikk.my.id/assets/logo-lockup.webp">
   <!-- Ikon situs dan favicon multi-format dari direktori aset lokal -->
@@ -22,134 +22,131 @@
 <body>
   <a class="skip" href="#main">Skip to content</a>
 
-  <!-- Bilah navigasi utama sticky -->
+  <!-- Bilah navigasi utama sticky dengan menu drawer khusus mobile -->
   <header class="nav">
-    <div class="wrap">
+    <div class="wrap nav-inner">
       <a class="brand" href="#top" aria-label="FrankenCrew home">
-        <img src="./assets/logo-icon.webp" width="36" height="36" alt="FrankenCrew shield logo" class="brand-logo">
+        <img src="./assets/logo-icon.webp" width="34" height="34" alt="FrankenCrew shield logo" class="brand-logo">
         <span class="brand-text">
           <span class="brand-name">Franken<strong>Crew</strong></span>
           <span class="brand-tag">Resilient System &amp; Auto Monitor</span>
         </span>
       </a>
-      <nav class="nav-links" aria-label="Sections">
-        <a href="#how">How it works</a>
-        <a href="#graveyard" class="nav-cta">Live Simulator</a>
-        <a href="#architecture">Architecture</a>
+
+      <nav class="nav-links" aria-label="Primary sections">
+        <a href="#graveyard" class="nav-cta">Simulator</a>
+        <a href="#how">Architecture</a>
         <a href="#tiers">Safety Tiers</a>
         <a href="#kiro">Kiro Spec</a>
-        <a href="https://github.com/FikFikk/franken-crew" target="_blank" rel="noopener">GitHub ↗</a>
+        <a href="https://github.com/FikFikk/franken-crew" target="_blank" rel="noopener">GitHub</a>
       </nav>
-      <span id="status" class="status" data-state="checking" role="status" aria-live="polite">
-        <i aria-hidden="true"></i><span class="status-text">Checking Sentinel…</span>
-      </span>
+
+      <div class="nav-right">
+        <span id="status" class="status" data-state="checking" role="status" aria-live="polite">
+          <i aria-hidden="true"></i><span class="status-text">Checking Sentinel...</span>
+        </span>
+
+        <details class="nav-drawer" id="nav-drawer">
+          <summary aria-label="Toggle navigation menu">Menu</summary>
+          <nav class="drawer-panel" aria-label="Mobile sections">
+            <a href="#graveyard" class="nav-cta">Live Simulator</a>
+            <a href="#how">Architecture &amp; Benchmarks</a>
+            <a href="#tiers">Safety Tiers &amp; Proofs</a>
+            <a href="#kiro">Kiro Spec Index</a>
+            <a href="https://github.com/FikFikk/franken-crew" target="_blank" rel="noopener">GitHub Repository</a>
+          </nav>
+        </details>
+      </div>
     </div>
   </header>
 
   <main id="main">
-    <!-- Bagian Hero: Grid Bento 12-kolom asimetris (7:5) dua baris -->
+    <!-- Seksi Hero asimetris dengan panel konsol langsung dan dok CLI + KPI -->
     <section class="hero" id="top">
       <div class="wrap">
-        <div class="bento-12 hero-bento">
-          <!-- Baris 1 Kiri (7 kolom): Narasi inti, CTA, dan badge terverifikasi -->
-          <div class="hero-copy span-7">
-            <p class="eyebrow">
-              <svg class="bolt" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
-              <span class="eyebrow-badge">LINUX KERNEL SENTRY + KIRO CREW</span>
-              <span>CGROUPS V2 · PSI · WHATSAPP HITL</span>
-            </p>
-            <h1>Sub-250 ms kernel reflexes. <span class="grad">Human-signed recovery on WhatsApp.</span></h1>
+        <div class="hero-top">
+          <div class="hero-copy">
+            <p class="hero-kicker"><span>Linux Kernel Sentry</span> / cgroup v2, PSI, WhatsApp HITL</p>
+            <h1>Sub-250 ms kernel reflexes. <em>Human-signed recovery on WhatsApp.</em></h1>
             <p class="lede">Built for constrained Linux VPS nodes that stall at 3 a.m. A pure-Go Sentinel watches <code>PSI</code> and <code>cgroup v2</code> pressure and applies one reversible reflex inside 250 ms, while a 4-agent Kiro Crew investigates via MCP and asks your vote via a single-use <strong>Ed25519</strong> WhatsApp poll before any Tier L2 restart or resource mutation runs.</p>
 
             <div class="cta">
               <a class="btn primary" href="#graveyard">Launch Interactive Simulator</a>
-              <a class="btn" href="#architecture">Explore Architecture</a>
-              <a class="btn ghost" href="https://github.com/FikFikk/franken-crew" target="_blank" rel="noopener">GitHub ↗</a>
+              <a class="btn" href="#install">Deploy on Linux</a>
+              <a class="btn quiet" href="https://github.com/FikFikk/franken-crew" target="_blank" rel="noopener">View Source on GitHub</a>
             </div>
 
-            <ul class="hero-badges" aria-label="Verified system guarantees">
-              <li>
-                <svg class="icon-cyan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
-                <span>8.8–80 ms Real Reflex</span>
-              </li>
-              <li>
-                <svg class="icon-green" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>
-                <span>≤ 32 MiB Sentinel RAM</span>
-              </li>
-              <li>
-                <svg class="icon-violet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6z"/><path d="m9 12 2 2 4-4"/></svg>
-                <span>Ed25519 Per-Step Tokens</span>
-              </li>
-              <li>
-                <svg class="icon-red" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m6 6 12 12"/></svg>
-                <span>Zero Raw Shell (L3 Blocked)</span>
-              </li>
+            <ul class="hero-specs" aria-label="Verified system guarantees">
+              <li>8.8-80 ms Real Reflex</li>
+              <li>&lt;= 32 MiB Sentinel RAM</li>
+              <li>Ed25519 Single-Use JTI</li>
+              <li>Zero Raw Shell (L3 Blocked)</li>
             </ul>
           </div>
 
-          <!-- Baris 1 Kanan (5 kolom): Showcase Brand Lockup & Kartu Log Insiden Terbaru -->
-          <div class="hero-console span-5">
+          <div class="hero-console">
             <div class="console-brandbar">
-              <img src="./assets/logo-lockup.webp" alt="FrankenCrew — Resilient System &amp; Auto Monitor" class="hero-lockup-img" width="210" height="70" fetchpriority="high">
+              <img src="./assets/logo-lockup.webp" alt="FrankenCrew Resilient System and Auto Monitor" class="hero-lockup-img" width="210" height="70" fetchpriority="high">
               <span class="console-mode-tag">Live Telemetry Preview</span>
             </div>
 
-            <aside class="teaser" id="teaser" aria-label="Latest replayed incident" hidden>
+            <aside class="teaser" id="teaser" data-ui-state="loading" aria-label="Latest replayed incident">
               <div class="teaser-head">
-                <span class="pill" data-teaser="state">RESOLVED</span>
-                <span class="teaser-id" data-teaser="id"></span>
+                <span class="pill" data-teaser="state">LOADING</span>
+                <span class="teaser-id" data-teaser="id">replay</span>
               </div>
-              <p class="teaser-title" data-teaser="title"></p>
-              <ol class="teaser-log" data-teaser="log"></ol>
+              <p class="teaser-title" data-teaser="title">Loading Graveyard trace dataset...</p>
+              <ol class="teaser-log" data-teaser="log">
+                <li><time>--:--</time><span><b>franken</b> Reading bundled replay stream</span></li>
+              </ol>
               <div class="teaser-footer-row">
-                <p class="teaser-foot" data-teaser="foot"></p>
-                <a class="teaser-cta" href="#graveyard">Inspect timeline ↓</a>
+                <p class="teaser-foot" data-teaser="foot">Fetching data/replay.json</p>
+                <a class="teaser-cta" href="#graveyard">Inspect timeline</a>
               </div>
             </aside>
           </div>
         </div>
 
-        <!-- Baris 2 Hero (7:5 sejajar penuh): Terminal Instalasi + Grid KPI 2x2 -->
-        <div class="bento-12 hero-bottom-bento">
-          <div class="span-7">
-            <div class="install" id="install" data-tabs>
-              <div class="install-head" role="tablist" aria-label="Install options">
+        <div class="hero-dock">
+          <div class="install" id="install" data-tabs>
+            <div class="install-head">
+              <div class="install-tabs" role="tablist" aria-label="Install options">
                 <button type="button" role="tab" id="itab-go" aria-controls="ipanel-go" aria-selected="true">Go Install</button>
                 <button type="button" role="tab" id="itab-crew" aria-controls="ipanel-crew" aria-selected="false" tabindex="-1">Kiro Crew App</button>
                 <button type="button" role="tab" id="itab-src" aria-controls="ipanel-src" aria-selected="false" tabindex="-1">From Source</button>
-                <button type="button" role="tab" id="itab-sys" aria-controls="ipanel-sys" aria-selected="false" tabindex="-1">Systemd (Live VPS)</button>
-                <button type="button" class="copy" data-copy aria-label="Copy install commands">Copy</button>
+                <button type="button" role="tab" id="itab-sys" aria-controls="ipanel-sys" aria-selected="false" tabindex="-1">Systemd (VPS)</button>
               </div>
-              <div role="tabpanel" id="ipanel-go" aria-labelledby="itab-go">
-                <pre><code>go install github.com/FikFikk/franken-crew/cmd/franken@latest
+              <button type="button" class="copy" data-copy aria-label="Copy install commands">Copy</button>
+            </div>
+            <div role="tabpanel" id="ipanel-go" aria-labelledby="itab-go">
+              <pre><code>go install github.com/FikFikk/franken-crew/cmd/franken@latest
 go install github.com/FikFikk/franken-crew/cmd/wa-bridge@latest</code></pre>
-              </div>
-              <div role="tabpanel" id="ipanel-crew" aria-labelledby="itab-crew" hidden>
-                <pre><code>git clone https://github.com/FikFikk/franken-crew.git
+            </div>
+            <div role="tabpanel" id="ipanel-crew" aria-labelledby="itab-crew" hidden>
+              <pre><code>git clone https://github.com/FikFikk/franken-crew.git
 kirocrew app install "$PWD/franken-crew"
-<span class="c"># trust and enable under Apps &gt; Library; the Graveyard simulator mounts in the sidebar</span></code></pre>
-              </div>
-              <div role="tabpanel" id="ipanel-src" aria-labelledby="itab-src" hidden>
-                <pre><code>git clone https://github.com/FikFikk/franken-crew.git &amp;&amp; cd franken-crew
+<span class="c"># percayakan dan aktifkan di Apps &gt; Library; simulator Graveyard tampil di sidebar</span></code></pre>
+            </div>
+            <div role="tabpanel" id="ipanel-src" aria-labelledby="itab-src" hidden>
+              <pre><code>git clone https://github.com/FikFikk/franken-crew.git &amp;&amp; cd franken-crew
 go test ./... &amp;&amp; go build -o bin/ ./cmd/...
 ./bin/franken lab simulate --out ui/data/replay.json
-./bin/franken lab serve --listen 127.0.0.1:3008   <span class="c"># dashboard + simulator</span></code></pre>
-              </div>
-              <div role="tabpanel" id="ipanel-sys" aria-labelledby="itab-sys" hidden>
-                <pre><code><span class="c"># Inisialisasi kunci Ed25519 dan pairing WhatsApp ke direktori resmi systemd</span>
+./bin/franken lab serve --listen 127.0.0.1:3008</code></pre>
+            </div>
+            <div role="tabpanel" id="ipanel-sys" aria-labelledby="itab-sys" hidden>
+              <pre><code><span class="c"># Inisialisasi kunci Ed25519 dan pairing WhatsApp ke direktori resmi systemd</span>
 sudo franken keys init --dir /etc/franken/keys
 sudo franken wa-login --db /var/lib/franken/wa-bridge-session.db
 sudo systemctl enable --now franken.slice franken-sentinel.service franken-bridge.service</code></pre>
-              </div>
             </div>
           </div>
 
-          <div class="stats-panel span-5">
+          <div class="stats-panel">
             <dl class="stats" aria-describedby="stats-note">
-              <div><dt>median L1 reflex latency</dt><dd data-stat="reflex">–</dd></div>
-              <div><dt>L2 runs approved by human</dt><dd data-stat="approved">–</dd></div>
-              <div><dt>unsafe actions blocked</dt><dd data-stat="blocked">–</dd></div>
-              <div><dt data-stat="incidents-detail">incidents replayed</dt><dd data-stat="incidents">–</dd></div>
+              <div><dt>median L1 reflex latency</dt><dd data-stat="reflex">--</dd></div>
+              <div><dt>L2 runs approved by human</dt><dd data-stat="approved">--</dd></div>
+              <div><dt>unsafe actions blocked</dt><dd data-stat="blocked">--</dd></div>
+              <div><dt data-stat="incidents-detail">incidents replayed</dt><dd data-stat="incidents">--</dd></div>
             </dl>
             <p class="stats-note" id="stats-note" data-stat="source">Figures come from the replay dataset in the Graveyard simulator below.</p>
           </div>
@@ -157,111 +154,17 @@ sudo systemctl enable --now franken.slice franken-sentinel.service franken-bridg
       </div>
     </section>
 
-    <!-- Bagian 1 (#how): Bento Grid Asimetris 7:5 / 5:7 untuk Empat Organ Terpisah -->
-    <section class="section section-alt" id="how" aria-labelledby="how-title">
+    <!-- Seksi 01: Panggung Simulator Graveyard langsung di bawah hero -->
+    <section class="section" id="graveyard" aria-labelledby="gy-title">
       <div class="wrap">
-        <div class="section-head">
-          <div class="section-head-main">
-            <p class="kicker">How it works</p>
-            <h2 id="how-title">One monster, four separated organs</h2>
+        <header class="section-header">
+          <div class="stitch-index">
+            <span class="stitch-mark">01</span>
+            <span>+-- Interactive Telemetry Replay</span>
           </div>
-          <p class="sub">Each component owns one strict trust boundary and cannot bypass another. The Sentinel never runs L2 restarts alone, agents cannot invent shell commands, and systemd waits for a human-signed Ed25519 vote.</p>
-        </div>
-
-        <div class="bento-12">
-          <!-- Organ 1 (Sorotan 7 kolom) -->
-          <article class="bento-card amber span-7">
-            <div class="card-top">
-              <span class="card-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
-              </span>
-              <span class="card-step">01 · Reflexes</span>
-            </div>
-            <h3>Go Kernel Sentinel</h3>
-            <p>Polls <code>/proc/pressure/memory</code>, cgroup v2 <code>memory.events</code>, and journald at 1 Hz. On P1/P2 thrashing it applies one reversible L1 reflex—<code>cgroup_reclaim</code> (bounded at 200 ms with in-flight deduplication) or runtime <code>MemoryHigh</code> throttle—with automatic TTL rollback and vanished-unit reconciliation.</p>
-            <div class="card-meta">
-              <span class="meta-pill">&lt; 250 ms budget</span>
-              <span class="meta-pill">TTL auto-rollback</span>
-              <code class="card-pkg">internal/sentinel · internal/reflex</code>
-            </div>
-          </article>
-
-          <!-- Organ 2 (5 kolom) -->
-          <article class="bento-card violet span-5">
-            <div class="card-top">
-              <span class="card-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4a3 3 0 0 0-3 3v.5A3 3 0 0 0 4 10.3 3 3 0 0 0 5 15a3 3 0 0 0 4 3.8V4z"/><path d="M15 4a3 3 0 0 1 3 3v.5a3 3 0 0 1 2 2.8 3 3 0 0 1-1 4.7 3 3 0 0 1-4 3.8V4z"/></svg>
-              </span>
-              <span class="card-step">02 · Brain</span>
-            </div>
-            <h3>4-Agent Kiro Crew</h3>
-            <p><code>franken-conductor</code> wakes on webhooks and orchestrates three specialists: <code>franken-sentry</code> captures redacted telemetry, <code>franken-architect</code> writes a canonical SHA-256 plan, and <code>franken-remediator</code> drives WhatsApp approval and L2 steps.</p>
-            <div class="card-meta">
-              <span class="meta-pill">Webhook + 15m sweep</span>
-              <code class="card-pkg">app.json · .kiro/agents/</code>
-            </div>
-          </article>
-
-          <!-- Organ 3 (5 kolom) -->
-          <article class="bento-card green span-5">
-            <div class="card-top">
-              <span class="card-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6z"/><path d="m9 12 2 2 4-4"/></svg>
-              </span>
-              <span class="card-step">03 · Hands</span>
-            </div>
-            <h3>Policy &amp; PreToolUse Gate</h3>
-            <p>Every plan is validated against <code>policy/actions.yaml</code>: allowlisted tools only, PID 1 and critical units (<code>ssh</code>, <code>systemd-journald</code>, <code>tailscaled</code>, <code>franken-bridge</code>) permanently protected, and MCP calls audited by <code>franken guard --audit</code>.</p>
-            <div class="card-meta">
-              <span class="meta-pill">Single-use JTI</span>
-              <code class="card-pkg">internal/policy · internal/approval</code>
-            </div>
-          </article>
-
-          <!-- Organ 4 (Sorotan 7 kolom) -->
-          <article class="bento-card pink span-7">
-            <div class="card-top">
-              <span class="card-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/><path d="m9.5 10 1.8 1.8 3.4-3.6"/></svg>
-              </span>
-              <span class="card-step">04 · Conscience</span>
-            </div>
-            <h3>WhatsApp Approval &amp; Forward Verification</h3>
-            <p><code>wa-bridge</code> delivers a Native Poll (with deterministic short-code fallback) to allowlisted admin JIDs, mints one unique Ed25519 token per approved step, and monitors a 120 s forward <code>verify_health</code> observation window before rolling back L1 limits and writing a secret-redacted postmortem.</p>
-            <div class="card-meta">
-              <span class="meta-pill">120 s verify window</span>
-              <span class="meta-pill">Secret-redacted markdown</span>
-              <code class="card-pkg">cmd/wa-bridge · verify_worker.go</code>
-            </div>
-          </article>
-        </div>
-
-        <div class="flow-wrap">
-          <p class="flow-label">End-to-End Closed Loop Execution Sequence</p>
-          <ol class="flow" aria-label="Incident closed loop stages">
-            <li>PSI &amp; cgroup spike</li>
-            <li>Sub-250 ms L1 reflex</li>
-            <li>SSE / Webhook triage</li>
-            <li>SHA-256 policy plan</li>
-            <li>WhatsApp poll</li>
-            <li>Ed25519 per-step tokens</li>
-            <li>120 s forward verify</li>
-            <li>Redacted postmortem</li>
-          </ol>
-        </div>
-      </div>
-    </section>
-
-    <!-- Bagian 2 (#graveyard): Panggung Simulator Graveyard Interaktif -->
-    <section class="section graveyard-section" id="graveyard" aria-labelledby="gy-title">
-      <div class="wrap">
-        <div class="section-head">
-          <div class="section-head-main">
-            <p class="kicker">Interactive Replay &amp; Simulator</p>
-            <h2 id="gy-title">Walk through the Graveyard</h2>
-          </div>
-          <p class="sub">Each grave is a complete incident trace through the real engine: kernel PSI telemetry, L1 reflex, 4-agent Crew transcript, WhatsApp poll vote, health verification, and the generated postmortem.</p>
-        </div>
+          <h2 id="gy-title">Walk through the Graveyard</h2>
+          <p class="sub">Each grave is a complete incident trace through the real engine: kernel PSI telemetry, L1 reflex, 4-agent Crew transcript, WhatsApp poll vote, 120 s health verify, and the redacted postmortem.</p>
+        </header>
 
         <div class="simulator-stage">
           <div class="stage-toolbar">
@@ -270,7 +173,7 @@ sudo systemctl enable --now franken.slice franken-sentinel.service franken-bridg
               <li><span>2</span> Press <strong>Play</strong> or scrub the timeline</li>
               <li><span>3</span> Inspect Swimlanes, WhatsApp &amp; Postmortem</li>
             </ol>
-            <span class="stage-badge">Engine Simulation · Interactive Trace</span>
+            <span class="stage-badge">Interactive Replay Engine</span>
           </div>
           <div id="graveyard-app" class="graveyard-mount"></div>
           <noscript><p class="noscript">The interactive simulator requires JavaScript. The raw replay dataset is available at <a href="./data/replay.json">data/replay.json</a>.</p></noscript>
@@ -278,240 +181,282 @@ sudo systemctl enable --now franken.slice franken-sentinel.service franken-bridg
       </div>
     </section>
 
-    <!-- Bagian 3 (#architecture): Tiga Bidang Kepercayaan & Tolok Ukur Perangkat Keras -->
-    <section class="section section-alt" id="architecture" aria-labelledby="arch-title">
+    <!-- Seksi 02: Rel sticky kiri + Tulang Punggung Terjahit 4 Organ & Ledger Benchmark -->
+    <section class="section section-elev" id="how" aria-labelledby="how-title">
       <div class="wrap">
-        <div class="section-head">
-          <div class="section-head-main">
-            <p class="kicker">Architecture &amp; Trust Boundaries</p>
-            <h2 id="arch-title">Three planes, zero unverified mutations</h2>
+        <div class="spine-layout">
+          <aside class="spine-rail">
+            <div class="stitch-index">
+              <span class="stitch-mark">02</span>
+              <span>+-- Closed Loop &amp; Trust Planes</span>
+            </div>
+            <h2 id="how-title">One monster, four isolated organs</h2>
+            <p class="sub">Each component owns one strict trust boundary across kernel, MCP agents, and human bridge. The Sentinel never runs L2 restarts alone, agents cannot invent shell commands, and systemd waits for a signed Ed25519 vote.</p>
+
+            <ol class="loop-list" aria-label="Closed-loop incident sequence">
+              <li><span>01</span> PSI &amp; cgroup v2 spike detection</li>
+              <li><span>02</span> Sub-250 ms L1 reversible reflex</li>
+              <li><span>03</span> SSE / Webhook crew triage wakeup</li>
+              <li><span>04</span> SHA-256 canonical policy plan lock</li>
+              <li><span>05</span> Allowlisted WhatsApp Native Poll</li>
+              <li><span>06</span> Single-use Ed25519 step token mint</li>
+              <li><span>07</span> 120 s forward verify_health window</li>
+              <li><span>08</span> L1 rollback &amp; redacted postmortem</li>
+            </ol>
+          </aside>
+
+          <div class="spine-list">
+            <article class="spine-row">
+              <div class="spine-meta">
+                <span class="spine-step">Organ 01 / Plane A: Kernel Reflexes</span>
+                <code class="spine-pkg">franken sentinel serve · internal/sentinel · internal/reflex</code>
+              </div>
+              <h3>Go Kernel Sentinel &amp; MCP Server</h3>
+              <p>Polls <code>/proc/pressure/memory</code>, cgroup v2 <code>memory.events</code>, and journald at <code>100 ms-1 Hz</code> with linear 60 s TTO forecasting.</p>
+              <ul class="spine-points">
+                <li>Applies one reversible L1 reflex inside 250 ms: bounded <code>200 ms</code> <code>cgroup_reclaim</code> with in-flight deduplication, or runtime <code>MemoryHigh</code> throttle with TTL auto-rollback.</li>
+                <li>Reconciles vanished transient <code>*.service</code> units every tick and captures single-process OOM kills via <code>memory.events</code>.</li>
+                <li>Serves Streamable HTTP <code>POST /mcp</code> and <code>GET /v1/events</code> SSE with automatic cursor reset on restart.</li>
+              </ul>
+            </article>
+
+            <article class="spine-row">
+              <div class="spine-meta">
+                <span class="spine-step">Organ 02 / Plane B: Kiro Crew Brain</span>
+                <code class="spine-pkg">app.json · .kiro/agents/</code>
+              </div>
+              <h3>Event-Driven 4-Agent Orchestration</h3>
+              <p><code>franken-conductor</code> wakes immediately via webhook on <code>incident.opened</code> or vote grant, backed by a 15 m sweep cron.</p>
+              <ul class="spine-points">
+                <li><code>franken-sentry</code> executes read-only L0 tools (<code>node_snapshot</code>, <code>cgroup_top</code>, <code>journal_tail</code>, <code>process_tree</code>).</li>
+                <li><code>franken-architect</code> submits remediation steps to <code>plan_submit</code> (max 2 revisions) to lock a canonical SHA-256 <code>plan_hash</code>.</li>
+                <li><code>franken-remediator</code> coordinates human WhatsApp polling and executes signed L2 actions step by step.</li>
+              </ul>
+            </article>
+
+            <article class="spine-row">
+              <div class="spine-meta">
+                <span class="spine-step">Organ 03 / Trust Gate: Hands</span>
+                <code class="spine-pkg">internal/policy · internal/approval</code>
+              </div>
+              <h3>Policy &amp; PreToolUse Audit Gate</h3>
+              <p>Every proposed plan is validated against <code>policy/actions.yaml</code> before reaching Sentinel or leaving MCP.</p>
+              <ul class="spine-points">
+                <li>Allows only explicit allowlisted actions and permanently shields PID 1, <code>ssh</code>/<code>sshd</code>, <code>systemd-journald</code>, <code>tailscaled</code>, Sentinel, and <code>franken-bridge</code>.</li>
+                <li>Pipes every MCP tool call through <code>franken guard --audit</code>, logging a redacted SQLite audit row and halting policy violations with exit code 2.</li>
+              </ul>
+            </article>
+
+            <article class="spine-row">
+              <div class="spine-meta">
+                <span class="spine-step">Organ 04 / Plane C: Conscience</span>
+                <code class="spine-pkg">cmd/wa-bridge · verify_worker.go</code>
+              </div>
+              <h3>Headless WhatsApp Bridge &amp; Forward Verification</h3>
+              <p>Single owner of the <code>whatsmeow</code> SQLite session; syncs node identity dynamically from Sentinel health and SSE streams.</p>
+              <ul class="spine-points">
+                <li>Delivers redacted alerts under 2 s and builds Native Poll options strictly from validated plan labels with deterministic short-code fallback.</li>
+                <li>Mints single-use per-step Ed25519 tokens bound to <code>plan_hash + step_id + action + target</code> with mode-<code>0600</code> private key isolation.</li>
+                <li>Observes a 120 s forward <code>verify_health</code> window and runs a <code>15 s x 3</code> heartbeat watcher before restoring L1 limits and writing postmortems.</li>
+              </ul>
+            </article>
           </div>
-          <p class="sub">Kernel telemetry and Bearer-protected MCP endpoints stay inside Tailscale or loopback boundaries while human authorization arrives asynchronously via WhatsApp.</p>
         </div>
 
-        <div class="bento-12">
-          <article class="bento-card cyan span-4">
-            <div class="card-top">
-              <span class="card-step">Plane A · Kernel &amp; Daemon</span>
-              <code>franken sentinel serve</code>
-            </div>
-            <h3>Deterministic Reflex &amp; MCP</h3>
-            <ul class="arch-list">
-              <li>Polls <code>PSI</code> + <code>cgroup v2</code> every <code>100 ms–1 Hz</code> with linear TTO forecasting over a 60 s slope.</li>
-              <li>Bounds kernel <code>memory.reclaim</code> writes to <code>200 ms</code> with in-flight deduplication so swap storms never stall goroutines.</li>
-              <li>Reconciles vanished transient <code>*.service</code> units every tick and captures single-process OOM kills via <code>memory.events</code>.</li>
-              <li>Serves Streamable HTTP <code>POST /mcp</code> and <code>GET /v1/events</code> SSE with automatic cursor reset on restart.</li>
-            </ul>
-          </article>
-
-          <article class="bento-card violet span-4">
-            <div class="card-top">
-              <span class="card-step">Plane B · Kiro Crew</span>
-              <code>app.json · preToolUse</code>
-            </div>
-            <h3>Event-Driven Agent Triage</h3>
-            <ul class="arch-list">
-              <li><code>franken-conductor</code> wakes immediately via webhook on <code>incident.opened</code> and vote grant, backed by a 15 m sweep cron.</li>
-              <li><code>franken-sentry</code> executes read-only L0 tools (<code>node_snapshot</code>, <code>cgroup_top</code>, <code>journal_tail</code>, <code>process_tree</code>).</li>
-              <li><code>franken-architect</code> submits steps to <code>plan_submit</code> (max 2 revisions) to lock a canonical SHA-256 <code>plan_hash</code>.</li>
-              <li>Every MCP tool invocation passes <code>franken guard --audit</code> before reaching Sentinel.</li>
-            </ul>
-          </article>
-
-          <article class="bento-card green span-4">
-            <div class="card-top">
-              <span class="card-step">Plane C · Human Bridge</span>
-              <code>cmd/wa-bridge</code>
-            </div>
-            <h3>Headless WA &amp; Ed25519</h3>
-            <ul class="arch-list">
-              <li>Single owner of the <code>whatsmeow</code> SQLite session; syncs node identity dynamically from Sentinel health and SSE streams.</li>
-              <li>Sends redacted incident alerts under 2 s and builds Native Poll options strictly from policy-validated plan labels + text-code fallback.</li>
-              <li>Signs single-use per-step Ed25519 tokens bound to <code>plan_hash + step_id + action + target</code> with mode-<code>0600</code> key isolation.</li>
-              <li>Runs a <code>15 s × 3</code> Sentinel heartbeat watcher so silent node crashes trigger out-of-band WhatsApp alerts.</li>
-            </ul>
-          </article>
-
-          <!-- Baris tolok ukur perangkat keras nyata selebar 12 kolom -->
-          <div class="span-12 bench-strip" role="region" aria-label="Measured Linux hardware benchmarks">
-            <div class="bench-item">
-              <span class="bench-val cyan">8.8–31 ms</span>
-              <span class="bench-label">Observed <code>cgroup_reclaim</code></span>
-              <span class="bench-sub">Well under the 250 ms L1 latency SLA on real Linux cgroups v2</span>
-            </div>
-            <div class="bench-item">
-              <span class="bench-val green">22–80 ms</span>
-              <span class="bench-label">Observed <code>cgroup_throttle</code></span>
-              <span class="bench-sub">Runtime <code>MemoryHigh</code> bump + TTL restoration verified live</span>
-            </div>
-            <div class="bench-item">
-              <span class="bench-val violet">~22–28 MiB</span>
-              <span class="bench-label">Sentinel RSS Memory</span>
-              <span class="bench-sub">Fits comfortably inside ≤ 32 MiB Raspberry Pi &amp; micro-VPS budgets</span>
-            </div>
-            <div class="bench-item">
-              <span class="bench-val amber">120 s</span>
-              <span class="bench-label">Forward Verify Window</span>
-              <span class="bench-sub">Requires low PSI &amp; TTO ≥ 600 s before transitioning to <code>RESOLVED</code></span>
-            </div>
+        <div id="architecture" class="bench-ledger" role="region" aria-label="Measured Linux hardware benchmarks">
+          <div class="bench-cell">
+            <span class="bench-val cyan">8.8-31 ms</span>
+            <span class="bench-label">Observed <code>cgroup_reclaim</code></span>
+            <span class="bench-sub">Measured on real Linux cgroups v2 within the 250 ms L1 budget</span>
+          </div>
+          <div class="bench-cell">
+            <span class="bench-val">22-80 ms</span>
+            <span class="bench-label">Observed <code>cgroup_throttle</code></span>
+            <span class="bench-sub">Runtime <code>MemoryHigh</code> bump + automatic TTL rollback verified live</span>
+          </div>
+          <div class="bench-cell">
+            <span class="bench-val cyan">~22-28 MiB</span>
+            <span class="bench-label">Sentinel RSS Memory</span>
+            <span class="bench-sub">Stays within the &lt;= 32 MiB Raspberry Pi &amp; micro-VPS target</span>
+          </div>
+          <div class="bench-cell">
+            <span class="bench-val">120 s</span>
+            <span class="bench-label">Forward Verify Window</span>
+            <span class="bench-sub">Requires low PSI &amp; TTO &gt;= 600 s before moving to <code>RESOLVED</code></span>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- Bagian 4 (#tiers): Matriks Kebijakan Aksi (L0-L3) & Invarian Keamanan Formal -->
+    <!-- Seksi 03: Tabel semantik matriks aksi L0-L3 & invarian formal P1-P4 -->
     <section class="section" id="tiers" aria-labelledby="tiers-title">
       <div class="wrap">
-        <div class="section-head">
-          <div class="section-head-main">
-            <p class="kicker">Policy &amp; Safety Guarantees</p>
-            <h2 id="tiers-title">Allowlisted action tiers &amp; formal invariants</h2>
+        <header class="section-header">
+          <div class="stitch-index">
+            <span class="stitch-mark">03</span>
+            <span>+-- Policy Contract &amp; Formal Proofs</span>
           </div>
+          <h2 id="tiers-title">Allowlisted action tiers &amp; formal invariants</h2>
           <p class="sub">Neither autonomous LLMs nor prompt injections embedded in system logs can bypass the explicit contract in <code>policy/actions.yaml</code>.</p>
+        </header>
+
+        <div class="table-wrap">
+          <table class="policy-table">
+            <thead>
+              <tr>
+                <th scope="col">Tier</th>
+                <th scope="col">Scope &amp; Authority</th>
+                <th scope="col">Allowed / Blocked Operations</th>
+                <th scope="col">Execution Gate</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td data-label="Tier"><span class="tier-tag l0">L0 · Observe</span></td>
+                <td data-label="Scope &amp; Authority">Read-only forensic inspection with secret &amp; phone number redaction applied before SQLite storage or LLM context.</td>
+                <td data-label="Allowed / Blocked Operations">
+                  <div class="tier-ops">
+                    <code>node_snapshot</code> <code>psi_history</code> <code>cgroup_top</code> <code>journal_tail</code> <code>process_tree</code> <code>zombie_report</code> <code>incident_claim</code>
+                  </div>
+                </td>
+                <td data-label="Execution Gate">Bearer auth + <code>franken guard --audit</code> logging.</td>
+              </tr>
+              <tr>
+                <td data-label="Tier"><span class="tier-tag l1">L1 · Reflex</span></td>
+                <td data-label="Scope &amp; Authority">Reversible pressure relief executed deterministically inside 250 ms without dropping running PIDs.</td>
+                <td data-label="Allowed / Blocked Operations">
+                  <div class="tier-ops">
+                    <code>cgroup_reclaim</code> <code>cgroup_throttle</code> <code>admission_close</code>
+                  </div>
+                </td>
+                <td data-label="Execution Gate">Deterministic kernel rule + TTL auto-rollback on verify pass.</td>
+              </tr>
+              <tr>
+                <td data-label="Tier"><span class="tier-tag l2">L2 · Mutate</span></td>
+                <td data-label="Scope &amp; Authority">Targeted service recovery gated on an accepted plan and explicit human approval.</td>
+                <td data-label="Allowed / Blocked Operations">
+                  <div class="tier-ops">
+                    <code>unit_restart</code> <code>pm2_reload</code> <code>pm2_restart_instance</code> <code>process_terminate</code> <code>zombie_reap</code>
+                  </div>
+                </td>
+                <td data-label="Execution Gate">Allowlisted WhatsApp vote + single-use per-step Ed25519 token.</td>
+              </tr>
+              <tr>
+                <td data-label="Tier"><span class="tier-tag l3">L3 · Forbidden</span></td>
+                <td data-label="Scope &amp; Authority">Absolute prohibitions rejected across Go policy, JSON schema, and PreToolUse hook even if signed.</td>
+                <td data-label="Allowed / Blocked Operations">
+                  <div class="tier-ops">
+                    <code>raw_shell</code> <code>file_delete</code> <code>power_action</code> <code>persistent_config</code> <code>global_drop_caches</code> <code>modify_memory_max</code>
+                  </div>
+                </td>
+                <td data-label="Execution Gate">Hard deny + <code>franken guard</code> exit code 2.</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
-        <div class="bento-12">
-          <article class="bento-card tier-card cyan span-3">
-            <div class="card-top">
-              <span class="card-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="2.5"/></svg>
-              </span>
-              <span class="card-step">L0 · Observe</span>
-            </div>
-            <h3>Forensic Telemetry</h3>
-            <p>Read-only inspection with secret &amp; phone number redaction applied before SQLite persistence or LLM context.</p>
-            <div class="tier-codes">
-              <code>node_snapshot</code> <code>psi_history</code> <code>cgroup_top</code> <code>journal_tail</code> <code>process_tree</code> <code>zombie_report</code> <code>incident_claim</code>
-            </div>
-          </article>
-
-          <article class="bento-card tier-card green span-3">
-            <div class="card-top">
-              <span class="card-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
-              </span>
-              <span class="card-step">L1 · Reflex</span>
-            </div>
-            <h3>Reversible Pressure Relief</h3>
-            <p>Executed deterministically inside 250 ms without dropping PIDs; restored automatically via TTL or health verify pass.</p>
-            <div class="tier-codes">
-              <code>cgroup_reclaim</code> <code>cgroup_throttle</code> <code>admission_close</code>
-            </div>
-          </article>
-
-          <article class="bento-card tier-card amber span-3">
-            <div class="card-top">
-              <span class="card-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
-              </span>
-              <span class="card-step">L2 · Mutate</span>
-            </div>
-            <h3>Human-Signed Recovery</h3>
-            <p>Gated on an accepted plan, an allowlisted WhatsApp vote, and an unexpired single-use Ed25519 signature per step.</p>
-            <div class="tier-codes">
-              <code>unit_restart</code> <code>pm2_reload</code> <code>pm2_restart_instance</code> <code>process_terminate</code> <code>zombie_reap</code>
-            </div>
-          </article>
-
-          <article class="bento-card tier-card red span-3">
-            <div class="card-top">
-              <span class="card-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="m6 6 12 12"/></svg>
-              </span>
-              <span class="card-step">L3 · Forbidden</span>
-            </div>
-            <h3>Absolute Prohibitions</h3>
-            <p>Rejected in Go policy, schema validation, and <code>franken guard</code> PreToolUse hook (exit 2) — even with a human token.</p>
-            <div class="tier-codes">
-              <code>raw_shell</code> <code>file_delete</code> <code>power_action</code> <code>persistent_config</code> <code>global_drop_caches</code> <code>modify_memory_max</code>
-            </div>
-          </article>
-
-          <!-- Invarian Formal P1-P4 sebagai 4 blok sejajar -->
-          <div class="inv-card span-3">
-            <strong>P1 · Latency Bound</strong>
-            <p>L1 reflexes complete within the 250 ms SLA without blocking goroutines on slow disk or swap reclaim.</p>
+        <dl class="invariants-list" aria-label="Formal safety invariants P1 to P4">
+          <div>
+            <dt>P1 · Latency Bound</dt>
+            <dd>L1 reflexes complete within the 250 ms SLA without blocking goroutines on slow disk or swap reclaim.</dd>
           </div>
-          <div class="inv-card span-3">
-            <strong>P2 · Replay Immunity</strong>
-            <p>Every Ed25519 token is single-use via atomic SQLite JTI consumption, step-bound, and TTL-expired.</p>
+          <div>
+            <dt>P2 · Replay Immunity</dt>
+            <dd>Every Ed25519 token is single-use via atomic SQLite JTI consumption, step-bound, and TTL-expired.</dd>
           </div>
-          <div class="inv-card span-3">
-            <strong>P3 · Protected Targets</strong>
-            <p>PID 1, <code>ssh</code>/<code>sshd</code>, <code>systemd-journald</code>, <code>tailscaled</code>, Sentinel, and <code>franken-bridge</code> remain untouchable.</p>
+          <div>
+            <dt>P3 · Protected Targets</dt>
+            <dd>PID 1, <code>ssh</code>/<code>sshd</code>, <code>systemd-journald</code>, <code>tailscaled</code>, Sentinel, and <code>franken-bridge</code> remain untouchable.</dd>
           </div>
-          <div class="inv-card span-3">
-            <strong>P4 · L1 Reversibility</strong>
-            <p>Each L1 throttle persists the prior <code>MemoryHigh</code> setting and restores it automatically with retry backoff.</p>
+          <div>
+            <dt>P4 · L1 Reversibility</dt>
+            <dd>Each L1 throttle persists the prior <code>MemoryHigh</code> setting and restores it automatically with retry backoff.</dd>
           </div>
-        </div>
+        </dl>
       </div>
     </section>
 
-    <!-- Bagian 5 (#kiro): Grid 3x2 Spesifikasi dan Agen Kiro -->
-    <section class="section section-alt" id="kiro" aria-labelledby="kiro-title">
+    <!-- Seksi 04: Indeks Direktori Spesifikasi & Kiro Crew -->
+    <section class="section section-elev" id="kiro" aria-labelledby="kiro-title">
       <div class="wrap">
-        <div class="section-head">
-          <div class="section-head-main">
-            <p class="kicker">Built with Kiro</p>
-            <h2 id="kiro-title">Every organ came out of a spec</h2>
+        <header class="section-header">
+          <div class="stitch-index">
+            <span class="stitch-mark">04</span>
+            <span>+-- Kiro Spec &amp; Repository Map</span>
           </div>
+          <h2 id="kiro-title">Every organ came out of a spec</h2>
           <p class="sub">Kiro drove the architecture from EARS requirements to property-based tests, and Kiro Crew runs the production remediation agents.</p>
-        </div>
+        </header>
 
-        <div class="bento-12">
-          <a class="kcard span-4" href="https://github.com/FikFikk/franken-crew/tree/main/.kiro/specs/server-incident-remediation" target="_blank" rel="noopener">
-            <div class="kcard-head"><span class="tag">Specs</span><span class="kcard-arrow" aria-hidden="true">↗</span></div>
+        <div class="spec-index">
+          <a class="spec-row" href="https://github.com/FikFikk/franken-crew/tree/main/.kiro/specs/server-incident-remediation" target="_blank" rel="noopener">
+            <div class="spec-top">
+              <span class="spec-tag">Specs</span>
+              <span class="spec-path">.kiro/specs/server-incident-remediation/</span>
+            </div>
             <h3>EARS requirements to property tests</h3>
             <p>Twelve formal requirements, a design defining correctness properties P1 to P4, and property-based verification with <code>pgregory.net/rapid</code>.</p>
-            <span class="path">.kiro/specs/server-incident-remediation/</span>
           </a>
-          <a class="kcard span-4" href="https://github.com/FikFikk/franken-crew/tree/main/.kiro/steering" target="_blank" rel="noopener">
-            <div class="kcard-head"><span class="tag">Steering</span><span class="kcard-arrow" aria-hidden="true">↗</span></div>
+
+          <a class="spec-row" href="https://github.com/FikFikk/franken-crew/tree/main/.kiro/steering" target="_blank" rel="noopener">
+            <div class="spec-top">
+              <span class="spec-tag">Steering</span>
+              <span class="spec-path">.kiro/steering/</span>
+            </div>
             <h3>Context that loads when it matters</h3>
             <p>Product, architecture, and security steering docs plus conditional <code>linux-kernel.md</code> and runbook rules loaded selectively per package.</p>
-            <span class="path">.kiro/steering/</span>
           </a>
-          <a class="kcard span-4" href="https://github.com/FikFikk/franken-crew/tree/main/.kiro/hooks" target="_blank" rel="noopener">
-            <div class="kcard-head"><span class="tag">Hooks</span><span class="kcard-arrow" aria-hidden="true">↗</span></div>
+
+          <a class="spec-row" href="https://github.com/FikFikk/franken-crew/tree/main/.kiro/hooks" target="_blank" rel="noopener">
+            <div class="spec-top">
+              <span class="spec-tag">Hooks</span>
+              <span class="spec-path">.kiro/hooks/</span>
+            </div>
             <h3>Guards on the agent's own hands</h3>
             <p><code>PreToolUse</code> pipes every MCP tool call through <code>franken guard --audit</code>, logging a redacted row and blocking violations with exit code 2.</p>
-            <span class="path">.kiro/hooks/</span>
           </a>
-          <a class="kcard span-4" href="https://github.com/FikFikk/franken-crew/tree/main/internal/mcpserver" target="_blank" rel="noopener">
-            <div class="kcard-head"><span class="tag">MCP</span><span class="kcard-arrow" aria-hidden="true">↗</span></div>
+
+          <a class="spec-row" href="https://github.com/FikFikk/franken-crew/tree/main/internal/mcpserver" target="_blank" rel="noopener">
+            <div class="spec-top">
+              <span class="spec-tag">MCP</span>
+              <span class="spec-path">internal/mcpserver · internal/wabridge</span>
+            </div>
             <h3>Two MCP servers, one boundary</h3>
             <p><code>franken-sentinel</code> exposes <code>incident_claim</code>, <code>plan_submit</code>, <code>action_execute</code>, and <code>verify_health</code> via Streamable HTTP; <code>franken-wa</code> adds Poll HITL tools.</p>
-            <span class="path">internal/mcpserver · internal/wabridge</span>
           </a>
-          <a class="kcard span-4" href="https://github.com/FikFikk/franken-crew/blob/main/app.json" target="_blank" rel="noopener">
-            <div class="kcard-head"><span class="tag">Kiro Crew App</span><span class="kcard-arrow" aria-hidden="true">↗</span></div>
+
+          <a class="spec-row" href="https://github.com/FikFikk/franken-crew/blob/main/app.json" target="_blank" rel="noopener">
+            <div class="spec-top">
+              <span class="spec-tag">Kiro Crew App</span>
+              <span class="spec-path">app.json · .kiro/agents/</span>
+            </div>
             <h3>Conductor and three specialists</h3>
             <p><code>app.json</code> bundles 4 agents, 3 on-demand skills, both MCP servers, <code>incident-sweep</code> &amp; <code>morning-digest</code> crons, and this Graveyard dashboard.</p>
-            <span class="path">app.json · .kiro/agents/</span>
           </a>
-          <a class="kcard span-4" href="https://github.com/FikFikk/franken-crew/tree/main/.kiro/skills" target="_blank" rel="noopener">
-            <div class="kcard-head"><span class="tag">Skills</span><span class="kcard-arrow" aria-hidden="true">↗</span></div>
+
+          <a class="spec-row" href="https://github.com/FikFikk/franken-crew/tree/main/.kiro/skills" target="_blank" rel="noopener">
+            <div class="spec-top">
+              <span class="spec-tag">Skills</span>
+              <span class="spec-path">.kiro/skills/</span>
+            </div>
             <h3>Forensic know-how on demand</h3>
             <p><code>linux-memory-forensics</code>, <code>remediation-runbooks</code>, and <code>incident-spec-writer</code> keep each specialist crisp and token-efficient.</p>
-            <span class="path">.kiro/skills/</span>
           </a>
         </div>
       </div>
     </section>
 
-    <!-- Bagian Penutup CTA Terpusat -->
-    <section class="end" aria-labelledby="end-title">
-      <div class="wrap">
-        <div class="end-card">
-          <img src="./assets/logo-lockup.webp" alt="FrankenCrew" class="end-lockup" width="260" height="87" loading="lazy">
+    <!-- Pita aksi penutup horizontal tanpa meniru tata letak hero -->
+    <section class="close-band" aria-labelledby="end-title">
+      <div class="wrap close-inner">
+        <div class="close-copy">
           <h2 id="end-title">Give your Linux server a crew that never sleeps.</h2>
-          <p class="sub">Static <code>amd64</code> and <code>arm64</code> Go binaries with zero CGO, engineered for Raspberry Pi &amp; micro-VPS instances. MIT licensed.</p>
-          <div class="cta">
-            <a class="btn primary" href="#install">Deploy FrankenCrew</a>
-            <a class="btn" href="#graveyard">Try the Simulator</a>
-            <a class="btn ghost" href="https://github.com/FikFikk/franken-crew/blob/main/docs/BLUEPRINT.md" target="_blank" rel="noopener">Read the Blueprint ↗</a>
-          </div>
+          <p>Static <code>amd64</code> and <code>arm64</code> Go binaries with zero CGO, engineered for Raspberry Pi &amp; micro-VPS instances. MIT licensed.</p>
+        </div>
+        <div class="close-actions">
+          <a class="btn primary" href="#install">Deploy FrankenCrew</a>
+          <a class="btn" href="#graveyard">Try the Simulator</a>
+          <a class="btn quiet" href="https://github.com/FikFikk/franken-crew/blob/main/docs/BLUEPRINT.md" target="_blank" rel="noopener">Read docs/BLUEPRINT.md</a>
         </div>
       </div>
     </section>
@@ -524,7 +469,7 @@ sudo systemctl enable --now franken.slice franken-sentinel.service franken-bridg
         <img src="./assets/logo-icon.webp" width="28" height="28" alt="" aria-hidden="true">
         <p><strong>FrankenCrew</strong> · Resilient System &amp; Auto Monitor · <a href="https://github.com/FikFikk/franken-crew/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a> · Kiroween 2026</p>
       </div>
-      <p class="disclosure">Unless a replay is labelled <em>Recording</em>, the interactive replay dataset in the Graveyard comes from <code>franken lab simulate</code>: the real detector, reflex engine, policy, Ed25519 approval verifier, and postmortem generator driven against an in-memory cgroup and fake systemd. Hardware benchmark callouts come from live Ubuntu Linux 7.0 stress tests with real Sentinel + WhatsApp integration.</p>
+      <p class="disclosure">Unless a replay is labelled <em>Recording</em>, the interactive replay dataset in the Graveyard comes from <code>franken lab simulate</code>: the real detector, reflex engine, policy, Ed25519 approval verifier, and postmortem generator driven against an in-memory cgroup and fake systemd. Hardware benchmark callouts come from live Ubuntu Linux 7.0 stress tests with real Sentinel and WhatsApp integration.</p>
     </div>
   </footer>
 </body>
