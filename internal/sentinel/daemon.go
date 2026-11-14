@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"path"
 	"path/filepath"
 	"slices"
@@ -75,9 +76,13 @@ type Daemon struct {
 	sampler       *cgroup.Sampler
 	psiWatcher    *psi.Watcher
 	eventsWatcher *cgroup.EventsWatcher
-	evalMu        sync.Mutex
-	openByCgroup  map[string]string
-	lastSeverity  map[string]detector.Severity
+	evalMu           sync.Mutex
+	openByCgroup     map[string]string
+	lastSeverity     map[string]detector.Severity
+	unitToRel        map[string]string
+	recentOOMAt      map[string]time.Time
+	recentOOMIncID   map[string]string
+	closedEpisodeIDs map[string]bool
 	// Set target hidup: targetOrder menyimpan path absolut sesuai urutan discovery, targetCancel
 	// menyimpan pembatal context watcher per target. Keduanya selalu berisi kunci yang sama.
 	targetsMu    sync.Mutex
@@ -94,6 +99,8 @@ const (
 	reflexTriggerPSI          = "psi"
 	reflexTriggerMemoryEvents = "memory_events"
 	reflexTriggerSample       = "sample"
+	reflexTriggerJournal      = "journal"
+	oomDedupeWindow           = 10 * time.Second
 )
 
 // reflexTrigger menyimpan jenis sinyal yang memulai evaluasi beserta instan monotoniknya.
@@ -184,10 +191,14 @@ func New(cfg Config) (*Daemon, error) {
 		sampler:       cgroup.NewSampler(cfg.FS, cfg.SampleInterval),
 		psiWatcher:    psiWatcher,
 		eventsWatcher: eventsWatcher,
-		openByCgroup:  make(map[string]string),
-		lastSeverity:  make(map[string]detector.Severity),
-		targetCancel:  make(map[string]context.CancelFunc),
-		ringLast:      make(map[string]time.Time),
+		openByCgroup:   make(map[string]string),
+		lastSeverity:   make(map[string]detector.Severity),
+		unitToRel:        make(map[string]string),
+		recentOOMAt:      make(map[string]time.Time),
+		recentOOMIncID:   make(map[string]string),
+		closedEpisodeIDs: make(map[string]bool),
+		targetCancel:     make(map[string]context.CancelFunc),
+		ringLast:         make(map[string]time.Time),
 	}, nil
 }
 
@@ -218,6 +229,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Bentuk set target awal (beserta watcher fast-path per target) sebelum sampler membaca baseline,
 	// lalu kosongkan set saat Run selesai agar daemon dapat dijalankan ulang dengan bersih.
 	d.reconcileTargets(runCtx, sinks)
+	// Selaraskan insiden terbuka dari SQLite dengan target hidup: pulihkan detektor atau tutup target yang sudah lenyap.
+	d.reconcileOpenIncidentsOnStartup(runCtx)
 	defer d.stopAllTargets()
 
 	// 1. Jalankan scheduler rollback TTL refleks L1 (termasuk sweep saldo TTL pasca-restart)
@@ -396,14 +409,8 @@ func (d *Daemon) evaluate(ctx context.Context, cgPath string, trig reflexTrigger
 		MemoryMax:     sample.MemoryMax,
 		PSISomeAvg10:  sample.PSISomeAvg10,
 		PSIFullAvg10:  sample.PSIFullAvg10,
-		Events: detector.MemoryEvents{
-			Low:     sample.Events.Low,
-			High:    sample.Events.High,
-			Max:     sample.Events.Max,
-			OOM:     sample.Events.OOM,
-			OOMKill: sample.Events.OOMKill,
-		},
-		At: now,
+		Events:        toDetectorEvents(sample.Events),
+		At:            now,
 	}
 
 	eval := d.cfg.Detector.Evaluate(detSample)
@@ -482,6 +489,13 @@ func (d *Daemon) reconcileTargets(ctx context.Context, sinks targetWatchSinks) {
 
 	// Siarkan perubahan di luar lock agar sampler dan konsumen fast-path tidak tertahan oleh I/O SSE/SQLite
 	broker := d.cfg.MCPServer.Broker()
+	if len(added) > 0 {
+		d.evalMu.Lock()
+		for _, cgPath := range added {
+			d.rememberUnitRelLocked(d.relativeCgroup(cgPath))
+		}
+		d.evalMu.Unlock()
+	}
 	for _, cgPath := range added {
 		rel := d.relativeCgroup(cgPath)
 		broker.Publish(mcpserver.StreamEvent{
@@ -499,6 +513,47 @@ func (d *Daemon) reconcileTargets(ctx context.Context, sinks targetWatchSinks) {
 			Data:    map[string]any{"cgroup": rel},
 		})
 		_ = d.cfg.Store.RecordAudit(context.Background(), "", "sentinel", "TARGET_REMOVED", fmt.Sprintf(`{"cgroup":%q}`, rel))
+		// Tutup insiden terbuka dan bersihkan state detektor jika target lenyap sebelum hysteresis selesai
+		d.closeIncidentOnRemovedTarget(ctx, rel, broker)
+	}
+}
+
+// reconcileOpenIncidentsOnStartup menyelaraskan insiden non-terminal di SQLite terhadap cgroup hidup saat Sentinel start.
+func (d *Daemon) reconcileOpenIncidentsOnStartup(ctx context.Context) {
+	openIncs, err := d.cfg.Store.ListOpenIncidents(ctx)
+	if err != nil {
+		return
+	}
+
+	targets := d.snapshotTargets()
+	liveRel := make(map[string]bool, len(targets))
+	for _, cgPath := range targets {
+		liveRel[d.relativeCgroup(cgPath)] = true
+	}
+
+	broker := d.cfg.MCPServer.Broker()
+	d.evalMu.Lock()
+	defer d.evalMu.Unlock()
+
+	for i := range openIncs {
+		inc := openIncs[i]
+		if isTerminalState(inc.State) {
+			continue
+		}
+		d.rememberUnitRelLocked(inc.Cgroup)
+		if liveRel[inc.Cgroup] || d.cgroupExistsOnDisk(inc.Cgroup) {
+			// Pulihkan referensi insiden terbuka pada daemon dan detektor agar target hidup tidak membuka insiden duplikat
+			sev := parseDetectorSeverity(inc.Severity)
+			d.openByCgroup[inc.Cgroup] = inc.ID
+			d.lastSeverity[inc.Cgroup] = sev
+			if unit := unitNameFromCgroup(inc.Cgroup); unit != "" && sev == detector.SeverityPostOOM {
+				d.rememberRecentOOMLocked(unit, inc.Cgroup, inc.OpenedAt.UTC(), inc.ID)
+			}
+			d.cfg.Detector.RestoreOpenIncident(inc.Cgroup, inc.ID, sev)
+			continue
+		}
+		escalate := strings.EqualFold(inc.Severity, string(detector.SeverityPostOOM))
+		_ = d.closeVanishedIncidentLocked(ctx, &inc, escalate, "vanished target reconciled on startup", broker)
 	}
 }
 
@@ -567,7 +622,7 @@ func (d *Daemon) sampleAllTargets(ctx context.Context, targets []string) {
 		if ctx.Err() != nil {
 			return
 		}
-		if _, err := d.EvaluateOnce(ctx, cgPath); err != nil {
+		if _, err := d.EvaluateOnce(ctx, cgPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			_ = d.cfg.Store.RecordAudit(context.Background(), "", "sentinel", "SAMPLE_ERROR",
 				fmt.Sprintf(`{"cgroup":%q,"error":%q}`, cgPath, err.Error()))
 		}
@@ -608,11 +663,20 @@ func (d *Daemon) handlePSIEvent(ctx context.Context, pev psi.PressureEvent) {
 	})
 }
 
-// handleEventsDelta memproses satu delta memory.events (inotify) dengan mengevaluasi target yang cocok.
+// handleEventsDelta memproses satu delta memory.events (inotify) dengan mengevaluasi target yang cocok,
+// termasuk fallback delta jika cgroup transien sudah lenyap sebelum SampleCgroup sempat membaca.
 func (d *Daemon) handleEventsDelta(ctx context.Context, dev cgroup.EventsDelta) {
 	trig := d.newTrigger(reflexTriggerMemoryEvents)
-	for _, cgPath := range d.matchTargetsForRel(d.snapshotTargets(), dev.Cgroup) {
-		_, _ = d.evaluate(ctx, cgPath, trig)
+	matched := d.matchTargetsForRel(d.snapshotTargets(), dev.Cgroup)
+	if len(matched) == 0 && d.isAllowedServiceRel(dev.Cgroup) {
+		matched = []string{kernelfs.JoinPath(d.cfg.CgroupRoot, strings.TrimPrefix(dev.Cgroup, "/"))}
+	}
+	for _, cgPath := range matched {
+		if _, err := d.evaluate(ctx, cgPath, trig); err != nil && errors.Is(err, fs.ErrNotExist) {
+			if dev.Delta.OOMKill > 0 || dev.Delta.OOM > 0 || dev.Delta.Max > 0 {
+				_ = d.handleVanishedEventsDelta(ctx, cgPath, dev, trig)
+			}
+		}
 	}
 }
 
@@ -637,17 +701,7 @@ func (d *Daemon) consumeJournalEvents(ctx context.Context, ch <-chan journal.Jou
 				},
 			})
 
-			incidentID := d.findOpenIncidentForUnit(jev.Unit)
-			if incidentID != "" {
-				_ = d.cfg.Store.SaveEvidence(ctx, &incident.EvidenceSnapshot{
-					ID:           d.newID("EVD"),
-					IncidentID:   incidentID,
-					Kind:         "journal_pattern",
-					RawData:      redacted,
-					RedactedData: redacted,
-					CapturedAt:   d.cfg.Clock().UTC(),
-				})
-			}
+			d.processJournalEvent(ctx, jev, redacted)
 		}
 	}
 }
@@ -655,7 +709,11 @@ func (d *Daemon) consumeJournalEvents(ctx context.Context, ch <-chan journal.Jou
 func (d *Daemon) reconcileEvaluation(ctx context.Context, cgPath, rel string, sample cgroup.Sample, eval detector.Evaluation, trig reflexTrigger) error {
 	d.evalMu.Lock()
 	defer d.evalMu.Unlock()
+	return d.reconcileEvaluationLocked(ctx, cgPath, rel, sample, eval, trig)
+}
 
+func (d *Daemon) reconcileEvaluationLocked(ctx context.Context, cgPath, rel string, sample cgroup.Sample, eval detector.Evaluation, trig reflexTrigger) error {
+	d.rememberUnitRelLocked(rel)
 	broker := d.cfg.MCPServer.Broker()
 
 	if eval.IncidentClosed && eval.IncidentID != "" {
@@ -677,6 +735,18 @@ func (d *Daemon) reconcileEvaluation(ctx context.Context, cgPath, rel string, sa
 	}
 
 	inc, getErr := d.cfg.Store.GetIncident(ctx, incID)
+	if getErr == nil && (inc.Cgroup != rel || d.closedEpisodeIDs[incID]) {
+		// Hindari tabrakan ID antar-cgroup atau episode lama yang sudah ditutup pada menit UTC yang sama
+		for seq := 2; seq <= 99; seq++ {
+			candidate := fmt.Sprintf("%s-%02d", incID, seq)
+			if _, probeErr := d.cfg.Store.GetIncident(ctx, candidate); errors.Is(probeErr, incident.ErrIncidentNotFound) {
+				incID = candidate
+				getErr = incident.ErrIncidentNotFound
+				d.cfg.Detector.RestoreOpenIncident(rel, incID, eval.Severity)
+				break
+			}
+		}
+	}
 	if getErr != nil {
 		// Insiden baru atau ID lama sudah terminal saat debounce reopening
 		if errors.Is(getErr, incident.ErrIncidentNotFound) {
@@ -783,7 +853,7 @@ func (d *Daemon) reconcileEvaluation(ctx context.Context, cgPath, rel string, sa
 }
 
 func (d *Daemon) maybeApplyReflex(ctx context.Context, inc *incident.Incident, cgPath, rel string, eval detector.Evaluation, broker *mcpserver.EventBroker, trig reflexTrigger) error {
-	if d.cfg.Catalog.IsProtectedUnit(rel) || d.cfg.Catalog.IsProtectedUnit(path.Base(rel)) || !d.isEligibleReflexTarget(cgPath, rel) {
+	if !d.cgroupExistsOnDisk(rel) || d.cfg.Catalog.IsProtectedUnit(rel) || d.cfg.Catalog.IsProtectedUnit(path.Base(rel)) || !d.isEligibleReflexTarget(cgPath, rel) {
 		return nil
 	}
 
@@ -793,7 +863,7 @@ func (d *Daemon) maybeApplyReflex(ctx context.Context, inc *incident.Incident, c
 	}
 
 	applied := false
-	// 1. Coba memory.reclaim proaktif 10%
+	// 1. Coba memory.reclaim proaktif 10% (dibatasi timeout agar write kernel pada cgroup tanpa swap tidak menyandera Daemon)
 	if act, err := d.cfg.Reflex.ApplyReclaim(ctx, reflex.ReclaimRequest{
 		IncidentID: inc.ID,
 		CgroupPath: cgPath,
@@ -817,17 +887,22 @@ func (d *Daemon) maybeApplyReflex(ctx context.Context, inc *incident.Incident, c
 				"trigger":     trig.kind,
 			},
 		})
+	} else {
+		_ = d.cfg.Store.RecordAudit(ctx, inc.ID, "sentinel", "REFLEX_RECLAIM_SKIPPED", fmt.Sprintf(`{"target":%q,"error":%q}`, rel, redact.String(err.Error())))
 	}
 
-	// 2. Untuk P1/POST_OOM pada unit systemd non-terlindungi, terapkan memory throttle MemoryHigh +5%
-	if eval.Severity.Rank() >= detector.SeverityP1.Rank() {
+	// 2. Untuk P1/POST_OOM pada unit systemd non-terlindungi yang masih aktif, terapkan memory throttle MemoryHigh +5%
+	if eval.Severity.Rank() >= detector.SeverityP1.Rank() && d.cgroupExistsOnDisk(rel) {
 		if unitName := unitNameFromCgroup(rel); unitName != "" && !d.cfg.Catalog.IsProtectedUnit(unitName) {
-			if act, err := d.cfg.Reflex.ApplyThrottle(ctx, reflex.ThrottleRequest{
+			throttleCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			act, err := d.cfg.Reflex.ApplyThrottle(throttleCtx, reflex.ThrottleRequest{
 				IncidentID: inc.ID,
 				Unit:       unitName,
 				CgroupPath: cgPath,
 				TTLSeconds: reflex.DefaultTTLSeconds,
-			}); err == nil {
+			})
+			cancel()
+			if err == nil {
 				applied = true
 				latencyMS := d.reflexLatencyMS(trig)
 				d.recordReflexLatency(ctx, inc.ID, act, latencyMS, trig)
@@ -846,6 +921,8 @@ func (d *Daemon) maybeApplyReflex(ctx context.Context, inc *incident.Incident, c
 						"trigger":     trig.kind,
 					},
 				})
+			} else {
+				_ = d.cfg.Store.RecordAudit(ctx, inc.ID, "sentinel", "REFLEX_THROTTLE_SKIPPED", fmt.Sprintf(`{"unit":%q,"error":%q}`, unitName, redact.String(err.Error())))
 			}
 		}
 	}
@@ -911,6 +988,7 @@ func (d *Daemon) closeIncidentOnRecovery(ctx context.Context, rel string, eval d
 		if tErr := d.cfg.Store.TransitionState(ctx, incID, incident.StateResolved, "sentinel", "auto-resolved after 120s sustained recovery"); tErr != nil {
 			return tErr
 		}
+		d.markEpisodeClosedLocked(incID)
 		// Simpan seri PSI/memori insiden sekali saat ditutup oleh hysteresis pemulihan
 		_, _ = d.cfg.MCPServer.SnapshotTelemetrySeries(ctx, incID)
 		broker.Publish(mcpserver.StreamEvent{
@@ -1079,22 +1157,424 @@ func (d *Daemon) matchTargetsForRel(targets []string, rel string) []string {
 }
 
 func (d *Daemon) findOpenIncidentForUnit(unit string) string {
-	trimmedUnit := strings.TrimSpace(unit)
-	if trimmedUnit == "" {
-		return ""
-	}
-	normalizedUnit := strings.TrimSuffix(trimmedUnit, ".service")
-
 	d.evalMu.Lock()
 	defer d.evalMu.Unlock()
+	_, id := d.findOpenIncidentForUnitLocked(unit)
+	return id
+}
+
+func (d *Daemon) findOpenIncidentForUnitLocked(unit string) (string, string) {
+	trimmedUnit := strings.TrimSpace(unit)
+	if trimmedUnit == "" {
+		return "", ""
+	}
+	normalizedUnit := strings.TrimSuffix(trimmedUnit, ".service")
 
 	for rel, id := range d.openByCgroup {
 		base := path.Base(strings.TrimSuffix(rel, "/"))
 		if base == trimmedUnit || strings.TrimSuffix(base, ".service") == normalizedUnit {
-			return id
+			return rel, id
 		}
 	}
-	return ""
+	return "", ""
+}
+
+// handleVanishedEventsDelta mencatat insiden POST_OOM / memory.events ketika direktori cgroup sudah keburu hilang.
+func (d *Daemon) handleVanishedEventsDelta(ctx context.Context, cgPath string, dev cgroup.EventsDelta, trig reflexTrigger) error {
+	rel := d.relativeCgroup(cgPath)
+	unit := unitNameFromCgroup(rel)
+	eventAt := dev.At.UTC()
+	if eventAt.IsZero() {
+		eventAt = d.cfg.Clock().UTC()
+	}
+
+	oomDelta := dev.Delta.OOMKill > 0 || dev.Delta.OOM > 0
+	rawDelta, _ := json.Marshal(dev)
+	redactedDelta := redact.String(string(rawDelta))
+
+	d.evalMu.Lock()
+	defer d.evalMu.Unlock()
+
+	d.rememberUnitRelLocked(rel)
+	if oomDelta {
+		if prevID, dup := d.recentOOMMatchLocked(unit, rel, eventAt); dup {
+			// Catat bukti delta pada insiden POST_OOM yang sudah dibuka oleh journal burst
+			_ = d.cfg.Store.SaveEvidence(ctx, &incident.EvidenceSnapshot{
+				ID:           d.newID("EVD"),
+				IncidentID:   prevID,
+				Kind:         "memory_events_delta",
+				RawData:      redactedDelta,
+				RedactedData: redactedDelta,
+				CapturedAt:   d.cfg.Clock().UTC(),
+			})
+			return nil
+		}
+	}
+
+	eval := d.cfg.Detector.ObserveDelta(rel, toDetectorEvents(dev.Current), toDetectorEvents(dev.Delta), 0, eventAt)
+	sample := cgroup.Sample{
+		Cgroup: cgPath,
+		Events: dev.Current,
+		At:     eventAt,
+	}
+	if err := d.reconcileEvaluationLocked(ctx, cgPath, rel, sample, eval, trig); err != nil {
+		return err
+	}
+
+	if incID := d.openByCgroup[rel]; incID != "" {
+		isOOM := oomDelta || eval.Severity == detector.SeverityPostOOM
+		if isOOM {
+			d.rememberRecentOOMLocked(unit, rel, eventAt, incID)
+		}
+		if !d.cgroupExistsOnDisk(rel) {
+			inc, getErr := d.cfg.Store.GetIncident(ctx, incID)
+			if getErr == nil {
+				reason := "target cgroup vanished after memory event"
+				if isOOM {
+					reason = "kernel OOM killed unit before cgroup sampling completed"
+				}
+				_ = d.closeVanishedIncidentLocked(ctx, inc, isOOM, reason, d.cfg.MCPServer.Broker())
+			}
+		}
+	}
+	return nil
+}
+
+// processJournalEvent menempelkan evidence journal ke insiden aktif atau membuka POST_OOM saat cgroup sudah lenyap.
+func (d *Daemon) processJournalEvent(ctx context.Context, jev journal.JournalEvent, redacted string) {
+	unit := normalizeServiceUnit(jev.Unit)
+	eventAt := jev.Timestamp.UTC()
+	if eventAt.IsZero() {
+		eventAt = d.cfg.Clock().UTC()
+	}
+
+	// Ambil snapshot target sebelum mengunci evalMu agar urutan lock tidak pernah bersilang dengan targetsMu
+	liveTargets := d.snapshotTargets()
+
+	d.evalMu.Lock()
+	defer d.evalMu.Unlock()
+
+	if jev.Category == journal.PatternOOM {
+		if prevID, dup := d.recentOOMMatchLocked(unit, "", eventAt); dup {
+			_ = d.cfg.Store.SaveEvidence(ctx, &incident.EvidenceSnapshot{
+				ID:           d.newID("EVD"),
+				IncidentID:   prevID,
+				Kind:         "journal_pattern",
+				RawData:      redacted,
+				RedactedData: redacted,
+				CapturedAt:   d.cfg.Clock().UTC(),
+			})
+			return
+		}
+	}
+
+	if openRel, openID := d.findOpenIncidentForUnitLocked(jev.Unit); openID != "" {
+		_ = d.cfg.Store.SaveEvidence(ctx, &incident.EvidenceSnapshot{
+			ID:           d.newID("EVD"),
+			IncidentID:   openID,
+			Kind:         "journal_pattern",
+			RawData:      redacted,
+			RedactedData: redacted,
+			CapturedAt:   d.cfg.Clock().UTC(),
+		})
+		if jev.Category == journal.PatternOOM {
+			cgPath := kernelfs.JoinPath(d.cfg.CgroupRoot, strings.TrimPrefix(openRel, "/"))
+			eval := d.cfg.Detector.ObserveDelta(openRel, detector.MemoryEvents{OOMKill: 1}, detector.MemoryEvents{OOMKill: 1}, 0, eventAt)
+			sample := cgroup.Sample{
+				Cgroup: cgPath,
+				Events: cgroup.MemoryEvents{OOMKill: 1},
+				At:     eventAt,
+			}
+			_ = d.reconcileEvaluationLocked(ctx, cgPath, openRel, sample, eval, d.newTrigger(reflexTriggerJournal))
+			d.rememberRecentOOMLocked(unit, openRel, eventAt, openID)
+			if !d.cgroupExistsOnDisk(openRel) {
+				if inc, getErr := d.cfg.Store.GetIncident(ctx, openID); getErr == nil {
+					_ = d.closeVanishedIncidentLocked(ctx, inc, true, "systemd journal reported OOM kill on vanished unit", d.cfg.MCPServer.Broker())
+				}
+			}
+		}
+		return
+	}
+
+	if jev.Category != journal.PatternOOM || unit == "" || isDisallowedCgroupNode(unit) || d.cfg.Catalog.IsProtectedUnit(unit) {
+		return
+	}
+
+	rel := d.resolveUnitRelLocked(unit, liveTargets)
+	if !d.isAllowedServiceRel(rel) {
+		return
+	}
+	cgPath := kernelfs.JoinPath(d.cfg.CgroupRoot, strings.TrimPrefix(rel, "/"))
+	eval := d.cfg.Detector.ObserveDelta(rel, detector.MemoryEvents{OOMKill: 1}, detector.MemoryEvents{OOMKill: 1}, 0, eventAt)
+	sample := cgroup.Sample{
+		Cgroup: cgPath,
+		Events: cgroup.MemoryEvents{OOMKill: 1},
+		At:     eventAt,
+	}
+	if err := d.reconcileEvaluationLocked(ctx, cgPath, rel, sample, eval, d.newTrigger(reflexTriggerJournal)); err != nil {
+		return
+	}
+
+	incID := d.openByCgroup[rel]
+	if incID == "" {
+		return
+	}
+	_ = d.cfg.Store.SaveEvidence(ctx, &incident.EvidenceSnapshot{
+		ID:           d.newID("EVD"),
+		IncidentID:   incID,
+		Kind:         "journal_pattern",
+		RawData:      redacted,
+		RedactedData: redacted,
+		CapturedAt:   d.cfg.Clock().UTC(),
+	})
+	d.rememberRecentOOMLocked(unit, rel, eventAt, incID)
+
+	if !d.cgroupExistsOnDisk(rel) {
+		if inc, getErr := d.cfg.Store.GetIncident(ctx, incID); getErr == nil {
+			_ = d.closeVanishedIncidentLocked(ctx, inc, true, "systemd journal reported OOM kill on vanished unit", d.cfg.MCPServer.Broker())
+		}
+	}
+}
+
+func (d *Daemon) closeIncidentOnRemovedTarget(ctx context.Context, rel string, broker *mcpserver.EventBroker) {
+	d.evalMu.Lock()
+	defer d.evalMu.Unlock()
+
+	incID, ok := d.openByCgroup[rel]
+	if !ok || incID == "" {
+		d.cfg.Detector.ForgetCgroup(rel)
+		return
+	}
+	inc, err := d.cfg.Store.GetIncident(ctx, incID)
+	if err != nil || isTerminalState(inc.State) {
+		delete(d.openByCgroup, rel)
+		delete(d.lastSeverity, rel)
+		d.cfg.Detector.ForgetCgroup(rel)
+		return
+	}
+	escalate := strings.EqualFold(inc.Severity, string(detector.SeverityPostOOM)) || d.lastSeverity[rel] == detector.SeverityPostOOM
+	_ = d.closeVanishedIncidentLocked(ctx, inc, escalate, "target cgroup vanished before hysteresis window completed", broker)
+}
+
+func (d *Daemon) closeVanishedIncidentLocked(ctx context.Context, inc *incident.Incident, escalate bool, reason string, broker *mcpserver.EventBroker) error {
+	if inc == nil || isTerminalState(inc.State) {
+		return nil
+	}
+	// Pertahankan insiden yang sedang menunggu approval/remediasi/verifikasi L2 agar restart unit tidak menutup paksa
+	if inc.State != incident.StateDetected && inc.State != incident.StateReflexApplied {
+		return nil
+	}
+
+	delete(d.openByCgroup, inc.Cgroup)
+	delete(d.lastSeverity, inc.Cgroup)
+	d.markEpisodeClosedLocked(inc.ID)
+	d.cfg.Detector.ForgetCgroup(inc.Cgroup)
+
+	_, _ = d.cfg.MCPServer.SnapshotTelemetrySeries(ctx, inc.ID)
+
+	if escalate {
+		if err := d.cfg.Store.TransitionState(ctx, inc.ID, incident.StateEscalated, "sentinel", reason); err != nil {
+			return err
+		}
+		broker.Publish(mcpserver.StreamEvent{
+			Type:       "incident.updated",
+			IncidentID: inc.ID,
+			Severity:   inc.Severity,
+			State:      string(incident.StateEscalated),
+			Summary:    fmt.Sprintf("Incident %s escalated on vanished OOM target %s", inc.ID, inc.Cgroup),
+		})
+		_ = d.cfg.Store.RecordAudit(ctx, inc.ID, "sentinel", "TARGET_VANISHED_ESCALATED", fmt.Sprintf(`{"cgroup":%q,"reason":%q}`, inc.Cgroup, reason))
+		return nil
+	}
+
+	if err := d.cfg.Store.TransitionState(ctx, inc.ID, incident.StateVerifying, "sentinel", reason); err != nil {
+		return err
+	}
+	if err := d.cfg.Store.TransitionState(ctx, inc.ID, incident.StateResolved, "sentinel", reason); err != nil {
+		return err
+	}
+	broker.Publish(mcpserver.StreamEvent{
+		Type:       "incident.updated",
+		IncidentID: inc.ID,
+		Severity:   inc.Severity,
+		State:      string(incident.StateResolved),
+		Summary:    fmt.Sprintf("Incident %s auto-resolved after transient target %s exited", inc.ID, inc.Cgroup),
+	})
+	_ = d.cfg.Store.RecordAudit(ctx, inc.ID, "sentinel", "TARGET_VANISHED_RESOLVED", fmt.Sprintf(`{"cgroup":%q,"reason":%q}`, inc.Cgroup, reason))
+	return nil
+}
+
+func (d *Daemon) markEpisodeClosedLocked(incID string) {
+	if incID == "" {
+		return
+	}
+	if d.closedEpisodeIDs == nil {
+		d.closedEpisodeIDs = make(map[string]bool)
+	} else if len(d.closedEpisodeIDs) > 1024 {
+		clear(d.closedEpisodeIDs)
+	}
+	d.closedEpisodeIDs[incID] = true
+}
+
+func (d *Daemon) rememberUnitRelLocked(rel string) {
+	if unit := unitNameFromCgroup(rel); unit != "" {
+		d.unitToRel[unit] = rel
+	}
+}
+
+func (d *Daemon) resolveUnitRelLocked(unit string, liveTargets []string) string {
+	if rel, ok := d.unitToRel[unit]; ok && rel != "" {
+		return rel
+	}
+	for _, cfgRel := range d.configuredServiceRels() {
+		if unitNameFromCgroup(cfgRel) == unit {
+			d.unitToRel[unit] = cfgRel
+			return cfgRel
+		}
+	}
+	for _, cgPath := range liveTargets {
+		rel := d.relativeCgroup(cgPath)
+		if unitNameFromCgroup(rel) == unit {
+			d.unitToRel[unit] = rel
+			return rel
+		}
+	}
+	for _, slice := range []string{"franken.slice", "system.slice"} {
+		candidate := "/" + slice + "/" + unit
+		if d.cgroupExistsOnDisk(candidate) {
+			d.unitToRel[unit] = candidate
+			return candidate
+		}
+	}
+	return "/system.slice/" + unit
+}
+
+func (d *Daemon) recentOOMMatchLocked(unit, rel string, at time.Time) (string, bool) {
+	key := oomDedupeKey(unit, rel)
+	if key == "" {
+		return "", false
+	}
+	prevAt, ok := d.recentOOMAt[key]
+	prevID := d.recentOOMIncID[key]
+	if !ok || prevID == "" {
+		return "", false
+	}
+	diff := at.Sub(prevAt)
+	if diff < 0 {
+		diff = -diff
+	}
+	return prevID, diff <= oomDedupeWindow
+}
+
+func (d *Daemon) rememberRecentOOMLocked(unit, rel string, at time.Time, incID string) {
+	key := oomDedupeKey(unit, rel)
+	if key == "" || incID == "" {
+		return
+	}
+	if len(d.recentOOMAt) > 256 {
+		for k, ts := range d.recentOOMAt {
+			if at.Sub(ts) > oomDedupeWindow || ts.Sub(at) > oomDedupeWindow {
+				delete(d.recentOOMAt, k)
+				delete(d.recentOOMIncID, k)
+			}
+		}
+	}
+	d.recentOOMAt[key] = at
+	d.recentOOMIncID[key] = incID
+}
+
+func (d *Daemon) cgroupExistsOnDisk(rel string) bool {
+	if d.cfg.FS == nil {
+		return false
+	}
+	cgPath := kernelfs.JoinPath(d.cfg.CgroupRoot, strings.TrimPrefix(rel, "/"))
+	_, err := d.cfg.FS.Stat(kernelfs.JoinPath(cgPath, "memory.current"))
+	return err == nil
+}
+
+func (d *Daemon) isAllowedServiceRel(rel string) bool {
+	trimmed := strings.Trim(strings.TrimSpace(rel), "/")
+	if trimmed == "" || trimmed == "." || trimmed == "host" {
+		return false
+	}
+	segments := strings.Split(trimmed, "/")
+	for _, seg := range segments {
+		if isDisallowedCgroupNode(seg) {
+			return false
+		}
+	}
+	if !strings.HasSuffix(segments[len(segments)-1], ".service") {
+		return false
+	}
+	// Bila CgroupPaths eksplisit dikonfigurasi operator, batasi deteksi hanya pada target tersebut
+	if cfgRels := d.configuredServiceRels(); len(cfgRels) > 0 {
+		return slices.Contains(cfgRels, "/"+trimmed)
+	}
+	return true
+}
+
+func (d *Daemon) configuredServiceRels() []string {
+	if len(d.cfg.CgroupPaths) == 0 {
+		return nil
+	}
+	var out []string
+	for _, p := range d.cfg.CgroupPaths {
+		trimmed := strings.TrimSpace(p)
+		if trimmed == "" {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "/") || !strings.HasPrefix(trimmed, d.cfg.CgroupRoot) {
+			trimmed = kernelfs.JoinPath(d.cfg.CgroupRoot, trimmed)
+		}
+		out = append(out, d.relativeCgroup(trimmed))
+	}
+	return out
+}
+
+func oomDedupeKey(unit, rel string) string {
+	if u := normalizeServiceUnit(unit); u != "" {
+		return u
+	}
+	if u := unitNameFromCgroup(rel); u != "" {
+		return u
+	}
+	return strings.TrimSpace(rel)
+}
+
+func normalizeServiceUnit(raw string) string {
+	u := strings.TrimSpace(raw)
+	if u == "" {
+		return ""
+	}
+	if !strings.Contains(u, ".") {
+		u += ".service"
+	}
+	return u
+}
+
+func toDetectorEvents(ev cgroup.MemoryEvents) detector.MemoryEvents {
+	return detector.MemoryEvents{
+		Low:     ev.Low,
+		High:    ev.High,
+		Max:     ev.Max,
+		OOM:     ev.OOM,
+		OOMKill: ev.OOMKill,
+	}
+}
+
+func parseDetectorSeverity(raw string) detector.Severity {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case string(detector.SeverityPostOOM):
+		return detector.SeverityPostOOM
+	case string(detector.SeverityP1):
+		return detector.SeverityP1
+	case string(detector.SeverityP2):
+		return detector.SeverityP2
+	case string(detector.SeverityP3):
+		return detector.SeverityP3
+	default:
+		return detector.SeverityP2
+	}
 }
 
 func unitNameFromCgroup(rel string) string {

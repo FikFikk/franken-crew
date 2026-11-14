@@ -1,0 +1,9 @@
+[Unit]
+Description=FrankenCrew Managed Application Slice
+Before=slices.target
+
+[Slice]
+# CPUAccounting= sengaja tidak dipasang karena dihapus pada systemd >=258
+MemoryAccounting=yes
+IOAccounting=yes
+

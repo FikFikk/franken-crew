@@ -125,6 +125,27 @@ func TestSystemdUnits_LabServiceHardening(t *testing.T) {
 	}
 }
 
+func TestSystemdSlice_FrankenSliceNoDeprecatedCPUAccounting(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join("systemd", "franken.slice")
+	unit := parseUnitDirectives(t, path)
+	slice := unit["Slice"]
+	if slice == nil {
+		t.Fatalf("%s must have a [Slice] section", path)
+	}
+	// CPUAccounting= sudah dihapus di systemd 259 dan menimbulkan peringatan ignored saat unit dimuat
+	if _, deprecated := slice["CPUAccounting"]; deprecated {
+		t.Errorf("%s must not set deprecated CPUAccounting= option", path)
+	}
+	for _, key := range []string{"MemoryAccounting", "IOAccounting"} {
+		got := slice[key]
+		if len(got) != 1 || got[0] != "yes" {
+			t.Errorf("%s: %s = %q, want [yes]", path, key, got)
+		}
+	}
+}
+
 // parseUnitDirectives membaca unit systemd menjadi section -> key -> nilai (sesuai urutan kemunculan).
 func parseUnitDirectives(t *testing.T, path string) map[string]map[string][]string {
 	t.Helper()

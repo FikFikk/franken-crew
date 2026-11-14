@@ -1,8 +1,11 @@
 package mcpserver
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -471,5 +474,67 @@ func TestVerifyHealth_AfterL2ExecutionResolvesIncident(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(h.srv.cfg.PostmortemDir, incID, "postmortem.md")); err != nil {
 		t.Fatalf("expected a postmortem for the resolved incident: %v", err)
+	}
+}
+
+func TestEventBroker_ResetsCursorAfterServerRestart(t *testing.T) {
+	// Simulasikan broker baru pasca restart Sentinel dengan nextID kecil (<= Last-Event-ID klien lama = 25)
+	broker := NewEventBroker("node-restarted", 64, time.Hour)
+	defer broker.Close()
+
+	// Event 1 sudah terbit di epoch baru sebelum bridge tersambung kembali
+	_ = broker.Publish(StreamEvent{
+		Type:       "target.added",
+		Summary:    "Target /franken.slice/app.service registered after restart",
+		IncidentID: "",
+	})
+
+	ts := httptest.NewServer(broker)
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
+	req.Header.Set("Last-Event-ID", "25") // ID dari proses Sentinel sebelum restart
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET SSE with stale Last-Event-ID: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Terbitkan insiden baru bernomor ID=2 (< 25) sesudah bridge tersambung
+	liveErr := make(chan struct{})
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		broker.Publish(StreamEvent{
+			Type:       "incident.opened",
+			IncidentID: "INC-20261114-1420-node-restarted",
+			Severity:   "P1",
+			Summary:    "P1 leak on /franken.slice/franken-chaos-workload.service",
+		})
+		close(liveErr)
+	}()
+
+	scanner := bufio.NewScanner(resp.Body)
+	sawBacklog := false
+	sawOpened := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, `"type":"target.added"`) {
+			sawBacklog = true
+		}
+		if strings.Contains(line, "INC-20261114-1420-node-restarted") {
+			sawOpened = true
+			break
+		}
+	}
+	<-liveErr
+
+	if !sawBacklog {
+		t.Errorf("expected new-epoch backlog event id=1 when stale Last-Event-ID=25 exceeded broker nextID")
+	}
+	if !sawOpened {
+		t.Fatalf("expected live event id=2 (<= stale Last-Event-ID=25) to be delivered after Sentinel restart, but it was dropped")
 	}
 }

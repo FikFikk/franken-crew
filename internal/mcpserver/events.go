@@ -42,6 +42,8 @@ type EventBroker struct {
 	nextSubID         uint64
 	heartbeatInterval time.Duration
 	nodeName          string
+	done              chan struct{}
+	closeOnce         sync.Once
 }
 
 // NewEventBroker membuat broker SSE baru dengan kapasitas riwayat dan interval heartbeat tertentu.
@@ -57,7 +59,20 @@ func NewEventBroker(nodeName string, maxHistory int, heartbeatInterval time.Dura
 		subscribers:       make(map[uint64]chan StreamEvent),
 		heartbeatInterval: heartbeatInterval,
 		nodeName:          nodeName,
+		done:              make(chan struct{}),
 	}
+}
+
+// Close memberi sinyal kepada seluruh handler SSE aktif agar segera berhenti saat server dimatikan.
+func (b *EventBroker) Close() {
+	if b == nil {
+		return
+	}
+	b.closeOnce.Do(func() {
+		if b.done != nil {
+			close(b.done)
+		}
+	})
 }
 
 // Publish menyensor metadata event lalu mendistribusikannya ke seluruh subscriber SSE yang aktif.
@@ -99,6 +114,11 @@ func (b *EventBroker) Publish(ev StreamEvent) StreamEvent {
 
 // Subscribe mendaftarkan konsumen SSE baru dan langsung menyertakan event pasca sinceID dari ring buffer.
 func (b *EventBroker) Subscribe(sinceID uint64) (uint64, <-chan StreamEvent, []StreamEvent) {
+	subID, ch, backlog, _ := b.subscribeWithCursor(sinceID)
+	return subID, ch, backlog
+}
+
+func (b *EventBroker) subscribeWithCursor(sinceID uint64) (uint64, <-chan StreamEvent, []StreamEvent, uint64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -107,19 +127,26 @@ func (b *EventBroker) Subscribe(sinceID uint64) (uint64, <-chan StreamEvent, []S
 	ch := make(chan StreamEvent, 64)
 	b.subscribers[subID] = ch
 
+	// Bila sinceID melampaui nextID broker saat ini, Sentinel telah restart (epoch baru):
+	// reset kursor ke 0 agar event bernomor kecil pada epoch baru tidak terbuang.
+	cursor := sinceID
+	if cursor > b.nextID {
+		cursor = 0
+	}
+
 	var backlog []StreamEvent
-	if sinceID > 0 {
+	if cursor > 0 {
 		for _, item := range b.history {
-			if item.ID > sinceID {
+			if item.ID > cursor {
 				backlog = append(backlog, item)
 			}
 		}
 	} else if len(b.history) > 0 {
-		// Apabila konsumen baru menyambung tanpa `since`, kirim riwayat terbaru yang masih aktif di buffer
+		// Apabila konsumen baru menyambung tanpa `since` atau pasca-restart, kirim riwayat terbaru yang aktif di buffer
 		backlog = append(backlog, b.history...)
 	}
 
-	return subID, ch, backlog
+	return subID, ch, backlog, cursor
 }
 
 // Unsubscribe menghapus subscriber dan menutup channel miliknya.
@@ -146,7 +173,7 @@ func (b *EventBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sinceID := parseSinceEventID(r)
-	subID, ch, backlog := b.Subscribe(sinceID)
+	subID, ch, backlog, lastDelivered := b.subscribeWithCursor(sinceID)
 	defer b.Unsubscribe(subID)
 
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -157,12 +184,13 @@ func (b *EventBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	// Kirim ulang event yang terlewat (resume) terlebih dahulu
-	lastDelivered := sinceID
 	for _, ev := range backlog {
 		if err := writeSSEFrame(w, ev); err != nil {
 			return
 		}
-		lastDelivered = ev.ID
+		if ev.ID > lastDelivered {
+			lastDelivered = ev.ID
+		}
 	}
 	flusher.Flush()
 
@@ -173,6 +201,9 @@ func (b *EventBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-b.done:
+			// Hentikan loop SSE segera agar http.Server.Shutdown tidak menunggu timeout
 			return
 		case ev, open := <-ch:
 			if !open {

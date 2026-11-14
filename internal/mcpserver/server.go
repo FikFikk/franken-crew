@@ -147,8 +147,15 @@ func New(cfg Config) (*Server, error) {
 }
 
 // Close menghentikan seluruh background verification worker secara bersih.
+// Close menghentikan resource internal server termasuk worker verifikasi L2 dan broker SSE.
 func (s *Server) Close() {
-	if s != nil && s.verifyCoord != nil {
+	if s == nil {
+		return
+	}
+	if s.broker != nil {
+		s.broker.Close()
+	}
+	if s.verifyCoord != nil {
 		s.verifyCoord.Close()
 	}
 }
@@ -234,10 +241,14 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 
 	select {
 	case <-ctx.Done():
+		// Tutup broker SSE terlebih dahulu agar koneksi stream aktif lepas sebelum Shutdown berjalan
+		s.Close()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = httpSrv.Shutdown(shutdownCtx)
-		s.Close()
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+			// Paksa penutupan koneksi tersisa jika graceful shutdown melewati batas waktu
+			_ = httpSrv.Close()
+		}
 		return nil
 	case err := <-errCh:
 		s.Close()

@@ -39,6 +39,8 @@ const (
 	DefaultRollbackInitialBackoff = 2 * time.Second
 	// DefaultRollbackMaxBackoff adalah jeda maksimal antar percobaan ulang rollback otomatis.
 	DefaultRollbackMaxBackoff = 60 * time.Second
+	// DefaultReclaimTimeout membatasi waktu tunggu write sinkron memory.reclaim agar cgroup tanpa swap tidak menyandera refleks.
+	DefaultReclaimTimeout = 200 * time.Millisecond
 )
 
 var (
@@ -60,6 +62,8 @@ var (
 	ErrInvalidAppName = errors.New("reflex: invalid application name for admission control")
 	// ErrUnknownReflexAction dikembalikan jika nama aksi refleks tidak dikenali saat rollback.
 	ErrUnknownReflexAction = errors.New("reflex: unknown reflex action type")
+	// ErrUnitNotFound dikembalikan ketika unit systemd target sudah berhenti atau dibongkar sebelum rollback berjalan.
+	ErrUnitNotFound = errors.New("reflex: systemd unit not found")
 )
 
 // EngineConfig menyimpan dependensi dan batasan operasional untuk Reflex Engine.
@@ -75,6 +79,8 @@ type EngineConfig struct {
 	RollbackInitialBackoff time.Duration
 	RollbackMaxBackoff     time.Duration
 	OnRollbackEscalated    func(action incident.ReflexAction, err error)
+	// ReclaimTimeout membatasi waktu tunggu write memory.reclaim (< 250 ms budget L1); <=0 memakai DefaultReclaimTimeout.
+	ReclaimTimeout time.Duration
 	// IDSource opsional menyediakan byte ID refleks (simulasi deterministik); nil memakai crypto/rand.
 	IDSource io.Reader
 }
@@ -91,9 +97,12 @@ type Engine struct {
 	rollbackMaxAttempts    int
 	rollbackInitialBackoff time.Duration
 	rollbackMaxBackoff     time.Duration
+	reclaimTimeout         time.Duration
 	onRollbackEscalated    func(action incident.ReflexAction, err error)
 	applyMu                sync.Mutex
 	rollbackMu             sync.Mutex
+	reclaimFlightMu        sync.Mutex
+	reclaimInFlight        map[string]bool
 	idMu                   sync.Mutex
 	idSource               io.Reader
 }
@@ -178,6 +187,10 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	if maxBackoff < initBackoff {
 		maxBackoff = initBackoff
 	}
+	reclaimTimeout := cfg.ReclaimTimeout
+	if reclaimTimeout <= 0 {
+		reclaimTimeout = DefaultReclaimTimeout
+	}
 
 	return &Engine{
 		store:                  cfg.Store,
@@ -190,6 +203,8 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		rollbackMaxAttempts:    maxAttempts,
 		rollbackInitialBackoff: initBackoff,
 		rollbackMaxBackoff:     maxBackoff,
+		reclaimTimeout:         reclaimTimeout,
+		reclaimInFlight:        make(map[string]bool),
 		onRollbackEscalated:    cfg.OnRollbackEscalated,
 		idSource:               cfg.IDSource,
 	}, nil
@@ -253,7 +268,7 @@ func (e *Engine) ApplyReclaim(ctx context.Context, req ReclaimRequest) (*inciden
 		return nil, fmt.Errorf("%w: requested=%d max_allowed(25%%)=%d", ErrReclaimExceedsCap, reclaimBytes, maxAllowed)
 	}
 
-	if err := kernelfs.TriggerReclaim(e.fs, req.CgroupPath, reclaimBytes); err != nil {
+	if err := e.triggerReclaimBounded(ctx, req.CgroupPath, reclaimBytes); err != nil {
 		return nil, err
 	}
 
@@ -280,6 +295,61 @@ func (e *Engine) ApplyReclaim(ctx context.Context, req ReclaimRequest) (*inciden
 		return nil, err
 	}
 	return action, nil
+}
+
+// triggerReclaimBounded memicu memory.reclaim dengan batas waktu ketat agar syscall kernel pada cgroup tanpa swap
+// tidak membekukan ApplyThrottle atau loop utama Sentinel.
+func (e *Engine) triggerReclaimBounded(ctx context.Context, cgroupPath string, reclaimBytes uint64) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("reclaim on %s canceled: %w", cgroupPath, err)
+	}
+
+	waitTimeout := e.reclaimTimeout
+	if waitTimeout <= 0 {
+		waitTimeout = DefaultReclaimTimeout
+	}
+	if dl, ok := ctx.Deadline(); ok {
+		rem := time.Until(dl)
+		if rem <= 0 {
+			return fmt.Errorf("reclaim on %s deadline exceeded: %w", cgroupPath, context.DeadlineExceeded)
+		}
+		if rem < waitTimeout {
+			waitTimeout = rem
+		}
+	}
+
+	e.reclaimFlightMu.Lock()
+	if e.reclaimInFlight == nil {
+		e.reclaimInFlight = make(map[string]bool)
+	}
+	if e.reclaimInFlight[cgroupPath] {
+		e.reclaimFlightMu.Unlock()
+		return fmt.Errorf("reclaim already in progress on %s: %w", cgroupPath, context.DeadlineExceeded)
+	}
+	e.reclaimInFlight[cgroupPath] = true
+	e.reclaimFlightMu.Unlock()
+
+	errCh := make(chan error, 1)
+	go func() {
+		defer func() {
+			e.reclaimFlightMu.Lock()
+			delete(e.reclaimInFlight, cgroupPath)
+			e.reclaimFlightMu.Unlock()
+		}()
+		errCh <- kernelfs.TriggerReclaim(e.fs, cgroupPath, reclaimBytes)
+	}()
+
+	timer := time.NewTimer(waitTimeout)
+	defer timer.Stop()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("reclaim on %s canceled: %w", cgroupPath, ctx.Err())
+	case <-timer.C:
+		return fmt.Errorf("reclaim %d bytes on %s timed out after %s: %w", reclaimBytes, cgroupPath, waitTimeout, context.DeadlineExceeded)
+	}
 }
 
 // ApplyThrottle menerapkan aksi L1 `cgroup_throttle` dengan memvalidasi MemoryHigh >= memory.current dan <= 95% RAM host.
@@ -495,6 +565,7 @@ func (e *Engine) rollbackWithPolicy(ctx context.Context, reflexID string, expire
 	}
 
 	var rollbackErr error
+	targetAbsent := false
 	switch action.Action {
 	case "cgroup_reclaim":
 		// Memory reclaim bersifat one-shot kernel hint; tidak ada properti persisten untuk dikembalikan
@@ -502,6 +573,11 @@ func (e *Engine) rollbackWithPolicy(ctx context.Context, reflexID string, expire
 	case "cgroup_throttle":
 		revertProps := buildRevertProps(payload)
 		rollbackErr = e.propDriver.SetProperties(ctx, action.Target, revertProps)
+		if errors.Is(rollbackErr, ErrUnitNotFound) {
+			// Unit sementara sudah berhenti dan dibongkar systemd; tidak ada properti runtime tersisa untuk dipulihkan.
+			targetAbsent = true
+			rollbackErr = nil
+		}
 	case "admission_close":
 		prev := payload.PreviousAdmission
 		if prev == "" {
@@ -527,10 +603,11 @@ func (e *Engine) rollbackWithPolicy(ctx context.Context, reflexID string, expire
 	}
 	if changed {
 		auditBytes, _ := json.Marshal(map[string]any{
-			"reflex_id": reflexID,
-			"action":    action.Action,
-			"status":    targetStatus,
-			"attempts":  payload.RollbackAttempts + 1,
+			"reflex_id":     reflexID,
+			"action":        action.Action,
+			"status":        targetStatus,
+			"attempts":      payload.RollbackAttempts + 1,
+			"target_absent": targetAbsent,
 		})
 		_ = e.store.RecordAudit(ctx, action.IncidentID, "sentinel", "REFLEX_ROLLED_BACK", string(auditBytes))
 	}

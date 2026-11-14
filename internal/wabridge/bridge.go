@@ -297,10 +297,12 @@ func (b *Bridge) CheckHeartbeatOnce(ctx context.Context) {
 
 	// Lakukan verifikasi aktif ke /healthz sebelum menghitungnya sebagai missed heartbeat
 	probeCtx, cancel := context.WithTimeout(ctx, b.cfg.HeartbeatInterval/2+500*time.Millisecond)
-	_, err := b.cfg.Sentinel.CheckHealthz(probeCtx)
+	hz, err := b.cfg.Sentinel.CheckHealthz(probeCtx)
 	cancel()
 
 	if err == nil {
+		// Sinkronkan nama node dari /healthz Sentinel agar tidak tertahan pada nilai default lama
+		b.setNodeName(hz.Node)
 		b.markHeartbeat(now)
 		return
 	}
@@ -317,7 +319,7 @@ func (b *Bridge) CheckHeartbeatOnce(ctx context.Context) {
 	if missed >= b.cfg.MaxMissedHeartbeats && !alreadyAlerted {
 		alertText := fmt.Sprintf(
 			"Node Silent Alert: Sentinel node *%s* tidak merespons %dx interval (%s). Terakhir aktif: %s. Error: %s",
-			b.cfg.NodeName,
+			b.nodeName(),
 			missed,
 			(time.Duration(missed) * b.cfg.HeartbeatInterval).Round(time.Second),
 			now.Add(-sinceLast).Format("15:04:05 UTC"),
@@ -347,9 +349,7 @@ func (b *Bridge) HandleSSEEvent(ctx context.Context, ev mcpserver.StreamEvent) {
 	b.markHeartbeat(now)
 
 	if ev.Node != "" {
-		b.mu.Lock()
-		b.cfg.NodeName = ev.Node
-		b.mu.Unlock()
+		b.setNodeName(ev.Node)
 	}
 
 	if ev.Type == "verification.completed" {
@@ -439,10 +439,28 @@ func (b *Bridge) sendFinalReport(ctx context.Context, ev mcpserver.StreamEvent) 
 	b.audit("FINAL_REPORT_SENT", fmt.Sprintf("incident=%s state=%s", incID, ev.State))
 }
 
-func (b *Bridge) nodeName() string {
+// NodeName mengembalikan nama node Sentinel terkini yang dipantau bridge secara thread-safe.
+func (b *Bridge) NodeName() string {
+	if b == nil {
+		return ""
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.cfg.NodeName
+}
+
+func (b *Bridge) nodeName() string {
+	return b.NodeName()
+}
+
+func (b *Bridge) setNodeName(node string) {
+	trimmed := strings.TrimSpace(node)
+	if trimmed == "" || b == nil {
+		return
+	}
+	b.mu.Lock()
+	b.cfg.NodeName = trimmed
+	b.mu.Unlock()
 }
 
 // boundedSet mengingat kunci terbaru dengan kapasitas tetap agar map dedupe tidak tumbuh tanpa batas.

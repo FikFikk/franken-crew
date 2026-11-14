@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/FikFikk/franken-crew/internal/cgroup"
 	"github.com/FikFikk/franken-crew/internal/incident"
 	"github.com/FikFikk/franken-crew/internal/kernelfs"
 	"github.com/FikFikk/franken-crew/internal/mcpserver"
@@ -541,4 +543,408 @@ func TestDaemon_RunActivatesConfiguredCgroupPathOnceMemoryCurrentExists(t *testi
 	}
 
 	h.stop(t)
+}
+
+func TestDaemon_VanishedTargetClosesOpenIncidentAndDetectsSubsequentLeak(t *testing.T) {
+	mfs := seedBaseHostFS()
+	chaosCG := "/sys/fs/cgroup/franken.slice/franken-chaos-workload.service"
+	chaosRel := "/franken.slice/franken-chaos-workload.service"
+
+	// Gunakan jam yang bisa dimajukan deterministik untuk kedua fase kebocoran
+	var clockMu sync.Mutex
+	curNow := time.Date(2026, 11, 14, 4, 29, 0, 0, time.UTC)
+	advance := func(d time.Duration) {
+		clockMu.Lock()
+		curNow = curNow.Add(d)
+		clockMu.Unlock()
+	}
+	nowFn := func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return curNow
+	}
+
+	store, cat, eng, srv := newSentinelTestDeps(t, mfs)
+	psiPoller := &trackingPSIPoller{}
+	inoPoller := &trackingInotifyPoller{}
+	d, err := New(Config{
+		NodeName:           "ip-test",
+		FS:                 mfs,
+		CgroupRoot:         "/sys/fs/cgroup",
+		ProcRoot:           "/proc",
+		PSIPoller:          psiPoller,
+		InotifyPoller:      inoPoller,
+		SampleInterval:     20 * time.Millisecond,
+		RollbackInterval:   50 * time.Millisecond,
+		RediscoverInterval: 20 * time.Millisecond,
+		RingWriteInterval:  -1,
+		Store:              store,
+		Catalog:            cat,
+		Reflex:             eng,
+		MCPServer:          srv,
+		Clock:              nowFn,
+	})
+	if err != nil {
+		t.Fatalf("sentinel.New: %v", err)
+	}
+
+	setLeafServiceCgroup(mfs, chaosCG, 20*1024*1024)
+	mfs.SetFile(chaosCG+"/memory.max", "209715200\n") // 200 MiB
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runErr := make(chan error, 1)
+	go func() { runErr <- d.Run(ctx) }()
+	defer func() {
+		cancel()
+		<-runErr
+	}()
+
+	// 1. Picu insiden P1 pertama (REFLEX_APPLIED) melalui kenaikan cepat TTO < 30 detik
+	mustEventually(t, "initial baseline on chaos workload", func() bool {
+		return len(srv.PSIRing().Query(chaosRel, 5, nowFn())) >= 1
+	})
+	advance(2 * time.Second)
+	mfs.SetFile(chaosCG+"/memory.current", "190000000\n")
+	mfs.SetFile(chaosCG+"/memory.pressure", "some avg10=40.00 avg60=12.00 avg300=2.00 total=500\nfull avg10=6.00 avg60=1.50 avg300=0.30 total=80\n")
+
+	var firstID string
+	mustEventually(t, "first REFLEX_APPLIED incident on chaos workload", func() bool {
+		open, listErr := store.ListOpenIncidents(context.Background())
+		if listErr != nil || len(open) != 1 {
+			return false
+		}
+		firstID = open[0].ID
+		return open[0].Cgroup == chaosRel && open[0].State == incident.StateReflexApplied
+	})
+
+	// 2. Unit transien selesai: systemd menghapus direktori cgroup sebelum hysteresis 120 detik sempat berjalan
+	advance(5 * time.Second)
+	removeLeafServiceCgroup(mfs, chaosCG)
+
+	mustEventually(t, "vanished transient unit incident auto-resolved", func() bool {
+		inc, getErr := store.GetIncident(context.Background(), firstID)
+		return getErr == nil && inc.State == incident.StateResolved && inc.ClosedAt != nil
+	})
+
+	// 3. Jalankan ulang unit transien dengan nama yang sama -> insiden kedua WAJIB terdeteksi (tidak tertelan)
+	advance(15 * time.Second)
+	setLeafServiceCgroup(mfs, chaosCG, 20*1024*1024)
+	mfs.SetFile(chaosCG+"/memory.max", "209715200\n")
+
+	mustEventually(t, "second chaos workload discovered", func() bool {
+		return psiPoller.isActive(chaosCG + "/memory.pressure")
+	})
+	advance(2 * time.Second)
+	mfs.SetFile(chaosCG+"/memory.current", "192000000\n")
+	mfs.SetFile(chaosCG+"/memory.pressure", "some avg10=38.00 avg60=10.00 avg300=2.00 total=600\nfull avg10=7.00 avg60=2.00 avg300=0.40 total=90\n")
+
+	mustEventually(t, "second fresh incident opened on recreated chaos workload", func() bool {
+		open, listErr := store.ListOpenIncidents(context.Background())
+		return listErr == nil && len(open) == 1 && open[0].ID != firstID && open[0].Cgroup == chaosRel
+	})
+}
+
+func TestDaemon_StartupReconcilesVanishedAndLiveOpenIncidents(t *testing.T) {
+	mfs := seedBaseHostFS()
+	liveCG := "/sys/fs/cgroup/system.slice/haunted-api.service"
+	liveRel := "/system.slice/haunted-api.service"
+	vanishedRel := "/franken.slice/franken-chaos-workload.service"
+	setLeafServiceCgroup(mfs, liveCG, 150*1024*1024)
+	mfs.SetFile(liveCG+"/memory.max", "209715200\n")
+
+	store, cat, eng, srv := newSentinelTestDeps(t, mfs)
+	ctx := context.Background()
+	t0 := time.Date(2026, 11, 14, 1, 27, 14, 0, time.UTC)
+
+	// Tanamkan 2 insiden sebelum restart: satu unitnya sudah hilang (macet REFLEX_APPLIED), satu masih hidup
+	if err := store.CreateIncident(ctx, &incident.Incident{
+		ID: "INC-STALE-VANISHED", Node: "ip-startup", Cgroup: vanishedRel, Severity: "P1", State: incident.StateReflexApplied, OpenedAt: t0,
+	}); err != nil {
+		t.Fatalf("seed vanished incident: %v", err)
+	}
+	if err := store.CreateIncident(ctx, &incident.Incident{
+		ID: "INC-STALE-LIVE", Node: "ip-startup", Cgroup: liveRel, Severity: "P2", State: incident.StateDetected, OpenedAt: t0.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("seed live incident: %v", err)
+	}
+
+	d, err := New(Config{
+		NodeName:           "ip-startup",
+		FS:                 mfs,
+		PSIPoller:          &trackingPSIPoller{},
+		InotifyPoller:      &trackingInotifyPoller{},
+		SampleInterval:     20 * time.Millisecond,
+		RediscoverInterval: 50 * time.Millisecond,
+		RingWriteInterval:  -1,
+		Store:              store,
+		Catalog:            cat,
+		Reflex:             eng,
+		MCPServer:          srv,
+		Clock:              func() time.Time { return t0.Add(2 * time.Minute) },
+	})
+	if err != nil {
+		t.Fatalf("sentinel.New: %v", err)
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, 180*time.Millisecond)
+	defer cancel()
+	if runErr := d.Run(runCtx); runErr != nil {
+		t.Fatalf("daemon.Run: %v", runErr)
+	}
+
+	vanished, _ := store.GetIncident(ctx, "INC-STALE-VANISHED")
+	if vanished.State != incident.StateResolved || vanished.ClosedAt == nil {
+		t.Errorf("expected stale vanished incident closed on startup (RESOLVED), got state=%s closed=%v", vanished.State, vanished.ClosedAt)
+	}
+
+	// Target hidup tidak boleh membuka insiden duplikat baru meski sempat tertekan
+	list, _ := store.ListIncidents(ctx, "", 20)
+	if len(list) != 2 {
+		t.Errorf("expected strictly the 2 seeded incidents without duplicate for live target, got %d (%+v)", len(list), list)
+	}
+}
+
+func TestDaemon_SingleProcessOOMOnVanishedCgroupCapturedViaDeltaAndJournal(t *testing.T) {
+	mfs := seedBaseHostFS()
+	store, cat, eng, srv := newSentinelTestDeps(t, mfs)
+
+	curNow := time.Date(2026, 11, 14, 4, 33, 26, 0, time.UTC)
+	journalPayloads := strings.Join([]string{
+		`{"_SYSTEMD_UNIT":"init.scope","_COMM":"systemd","_PID":"1","UNIT":"franken-chaos-workload.service","MESSAGE":"franken-chaos-workload.service: The kernel OOM killer killed some processes in this unit.","__REALTIME_TIMESTAMP":"1794630806000000"}`,
+		`{"_SYSTEMD_UNIT":"init.scope","_COMM":"systemd","_PID":"1","UNIT":"franken-chaos-workload.service","MESSAGE":"franken-chaos-workload.service: Failed with result 'oom-kill'.","__REALTIME_TIMESTAMP":"1794630806001000"}`,
+	}, "\n") + "\n"
+
+	d, err := New(Config{
+		NodeName:           "ip-oom",
+		FS:                 mfs,
+		PSIPoller:          &trackingPSIPoller{},
+		InotifyPoller:      &trackingInotifyPoller{},
+		JournalStream:      strings.NewReader(journalPayloads),
+		SampleInterval:     time.Hour,
+		RediscoverInterval: time.Hour,
+		RingWriteInterval:  -1,
+		Store:              store,
+		Catalog:            cat,
+		Reflex:             eng,
+		MCPServer:          srv,
+		Clock:              func() time.Time { return curNow },
+	})
+	if err != nil {
+		t.Fatalf("sentinel.New: %v", err)
+	}
+
+	subID, evCh, _ := srv.Broker().Subscribe(0)
+	defer srv.Broker().Unsubscribe(subID)
+
+	// 1. Uji jalur journal saat unit OOM dan cgroup transien sudah telanjur dihapus systemd:
+	// Dua baris log OOM beruntun harus dideduplikasi menjadi SATU insiden POST_OOM berstatus akhir ESCALATED.
+	runCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if runErr := d.Run(runCtx); runErr != nil {
+		t.Fatalf("daemon.Run: %v", runErr)
+	}
+
+	allIncs, _ := store.ListIncidents(context.Background(), "", 10)
+	if len(allIncs) != 1 {
+		t.Fatalf("expected 1 deduped POST_OOM incident from systemd OOM journal burst, got %d (%+v)", len(allIncs), allIncs)
+	}
+	if allIncs[0].Severity != "POST_OOM" || allIncs[0].State != incident.StateEscalated || allIncs[0].ClosedAt == nil {
+		t.Fatalf("expected POST_OOM/ESCALATED/closed incident from vanished unit OOM, got %+v", allIncs[0])
+	}
+
+	// 2. Uji jalur EventsDelta fallback saat memory.events mengirim delta OOMKill lalu direktori lenyap sebelum SampleCgroup
+	d.handleEventsDelta(context.Background(), cgroup.EventsDelta{
+		Cgroup:  "/franken.slice/fast-oom-worker.service",
+		Current: cgroup.MemoryEvents{Max: 1, OOM: 1, OOMKill: 1},
+		Delta:   cgroup.MemoryEvents{Max: 1, OOM: 1, OOMKill: 1},
+		At:      curNow.Add(15 * time.Second),
+	})
+
+	allAfterDelta, _ := store.ListIncidents(context.Background(), "", 10)
+	if len(allAfterDelta) != 2 {
+		t.Fatalf("expected second POST_OOM incident from vanished cgroup EventsDelta fallback, got %d (%+v)", len(allAfterDelta), allAfterDelta)
+	}
+
+	// Pastikan minimal dua event incident.opened ber-severity POST_OOM terkirim lewat SSE untuk WA bridge
+	openedPOSTOOM := 0
+	for {
+		select {
+		case ev := <-evCh:
+			if ev.Type == "incident.opened" && ev.Severity == "POST_OOM" {
+				openedPOSTOOM++
+			}
+		default:
+			goto doneDrain
+		}
+	}
+doneDrain:
+	if openedPOSTOOM != 2 {
+		t.Errorf("expected 2 SSE incident.opened POST_OOM alerts, got %d", openedPOSTOOM)
+	}
+}
+
+type daemonBlockingReclaimFS struct {
+	*kernelfs.MemFS
+	mu      sync.Mutex
+	release chan struct{}
+	calls   int
+}
+
+func (f *daemonBlockingReclaimFS) WriteFile(filePath string, data []byte) error {
+	if strings.HasSuffix(filePath, "memory.reclaim") {
+		f.mu.Lock()
+		f.calls++
+		ch := f.release
+		f.mu.Unlock()
+		<-ch
+		return nil
+	}
+	return f.MemFS.WriteFile(filePath, data)
+}
+
+func TestDaemon_BlockedReclaimDoesNotDeadlockThrottleOrVanishedClose(t *testing.T) {
+	mfs := seedBaseHostFS()
+	mfs.SetFile("/proc/meminfo", "MemTotal:       1048576 kB\nMemFree:         524288 kB\n")
+	cgPath := "/sys/fs/cgroup/franken.slice/franken-chaos-workload.service"
+	rel := "/franken.slice/franken-chaos-workload.service"
+	mfs.SetFile(cgPath+"/memory.current", "130000000\n")
+	mfs.SetFile(cgPath+"/memory.max", "167772160\n") // 160 MiB
+	mfs.SetFile(cgPath+"/memory.pressure", "some avg10=35.00 avg60=10.00 avg300=1.00 total=100\nfull avg10=8.00 avg60=2.00 avg300=0.50 total=20\n")
+	mfs.SetFile(cgPath+"/memory.events", "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\n")
+
+	release := make(chan struct{})
+	var closeOnce sync.Once
+	defer closeOnce.Do(func() { close(release) })
+	bfs := &daemonBlockingReclaimFS{MemFS: mfs, release: release}
+
+	store, err := incident.NewStore(filepath.Join(t.TempDir(), "blocked_reclaim.db"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer store.Close()
+
+	cat, err := policy.LoadCatalog(filepath.Join("..", "..", "policy", "actions.yaml"))
+	if err != nil {
+		t.Fatalf("LoadCatalog: %v", err)
+	}
+	spyProp := newSpyPropDriver()
+	t0 := time.Date(2026, 11, 14, 14, 30, 0, 0, time.UTC)
+	curNow := t0
+	eng, err := reflex.NewEngine(reflex.EngineConfig{
+		Store:             store,
+		FS:                bfs,
+		Catalog:           cat,
+		PropertyDriver:    spyProp,
+		AdmissionDriver:   reflex.NewFSAdmissionDriver(t.TempDir()),
+		HostMemTotalBytes: 1024 * 1024 * 1024,
+		ReclaimTimeout:    25 * time.Millisecond,
+		Clock:             func() time.Time { return curNow },
+	})
+	if err != nil {
+		t.Fatalf("reflex.NewEngine: %v", err)
+	}
+
+	srv, err := mcpserver.New(mcpserver.Config{
+		NodeName: "ip-172-31-45-195",
+		Store:    store,
+		Catalog:  cat,
+		Reflex:   eng,
+		FS:       bfs,
+		Clock:    func() time.Time { return curNow },
+	})
+	if err != nil {
+		t.Fatalf("mcpserver.New: %v", err)
+	}
+
+	d, err := New(Config{
+		NodeName:           "ip-172-31-45-195",
+		FS:                 bfs,
+		PSIPoller:          &trackingPSIPoller{},
+		InotifyPoller:      &trackingInotifyPoller{},
+		SampleInterval:     time.Hour,
+		RediscoverInterval: 20 * time.Millisecond,
+		RingWriteInterval:  -1,
+		Store:              store,
+		Catalog:            cat,
+		Reflex:             eng,
+		MCPServer:          srv,
+		Clock:              func() time.Time { return curNow },
+	})
+	if err != nil {
+		t.Fatalf("sentinel.New: %v", err)
+	}
+
+	watchCtx, watchCancel := context.WithCancel(context.Background())
+	var watchWG sync.WaitGroup
+	defer func() {
+		watchCancel()
+		watchWG.Wait()
+	}()
+
+	ctx := context.Background()
+	sinks := targetWatchSinks{
+		wg:       &watchWG,
+		psiCh:    make(chan psi.PressureEvent, 8),
+		eventsCh: make(chan cgroup.EventsDelta, 8),
+	}
+	d.reconcileTargets(watchCtx, sinks)
+
+	// Picu kebocoran cepat hingga P1 walau memory.reclaim memblokir di kernel
+	for i, cur := range []uint64{130000000, 145000000, 158000000} {
+		curNow = t0.Add(time.Duration(i) * time.Second)
+		mfs.SetFile(cgPath+"/memory.current", fmt.Sprintf("%d\n", cur))
+		if _, evalErr := d.EvaluateOnce(ctx, cgPath); evalErr != nil {
+			t.Fatalf("EvaluateOnce[%d]: %v", i, evalErr)
+		}
+	}
+
+	// P1 harus membuka insiden, ApplyReclaim timeout tanpa hang, ApplyThrottle berjalan, dan state menjadi REFLEX_APPLIED
+	incs, err := store.ListIncidents(ctx, "", 10)
+	if err != nil || len(incs) != 1 {
+		t.Fatalf("expected 1 open P1 incident after blocked reclaim, got %d (err=%v)", len(incs), err)
+	}
+	inc1 := incs[0]
+	if inc1.State != incident.StateReflexApplied {
+		t.Fatalf("expected incident %s to reach REFLEX_APPLIED via ApplyThrottle despite stalled reclaim, got %s", inc1.ID, inc1.State)
+	}
+	if count, cErr := store.CountAuditByEvent(ctx, inc1.ID, "REFLEX_RECLAIM_SKIPPED"); cErr != nil || count < 1 {
+		t.Fatalf("expected at least 1 REFLEX_RECLAIM_SKIPPED audit entry, got %d (err=%v)", count, cErr)
+	}
+
+	// Unit transien berhenti dan direktori cgroup hilang -> evalMu tidak boleh deadlock saat rediscovery menutup insiden
+	mfs.Remove(cgPath + "/memory.current")
+	mfs.Remove(cgPath)
+	d.reconcileTargets(watchCtx, sinks)
+
+	closedInc, err := store.GetIncident(ctx, inc1.ID)
+	if err != nil {
+		t.Fatalf("GetIncident: %v", err)
+	}
+	if closedInc.State != incident.StateResolved || closedInc.ClosedAt == nil {
+		t.Fatalf("expected %s auto-resolved immediately after target vanished, got state=%s closedAt=%v", inc1.ID, closedInc.State, closedInc.ClosedAt)
+	}
+
+	// Chaos uji kedua pada nama unit yang sama & menit yang sama segera mengalami OOM -> wajib tercatat POST_OOM/ESCALATED
+	curNow = curNow.Add(5 * time.Second)
+	d.handleEventsDelta(ctx, cgroup.EventsDelta{
+		Cgroup:  cgPath,
+		Current: cgroup.MemoryEvents{Max: 1, OOM: 1, OOMKill: 1},
+		Delta:   cgroup.MemoryEvents{Max: 1, OOM: 1, OOMKill: 1},
+		At:      curNow,
+	})
+
+	incsAfter, err := store.ListIncidents(ctx, "", 10)
+	if err != nil || len(incsAfter) != 2 {
+		t.Fatalf("expected second chaos workload OOM to create new incident in %s (got %d: %+v, err=%v)", rel, len(incsAfter), incsAfter, err)
+	}
+	var foundOOM bool
+	for _, candidate := range incsAfter {
+		if candidate.ID != inc1.ID && candidate.Severity == "POST_OOM" && candidate.State == incident.StateEscalated {
+			foundOOM = true
+		}
+	}
+	if !foundOOM {
+		t.Fatalf("expected second incident to be POST_OOM/ESCALATED, got %+v", incsAfter)
+	}
 }

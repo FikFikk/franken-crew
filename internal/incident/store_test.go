@@ -345,3 +345,41 @@ func TestStore_TransitionState_AtomicConcurrency(t *testing.T) {
 		t.Fatalf("expected ErrInvalidTransition after terminal commit, got %v", err)
 	}
 }
+
+func TestStore_ListOpenIncidents(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "open.db"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	t0 := time.Date(2026, 11, 14, 1, 0, 0, 0, time.UTC)
+
+	seed := []Incident{
+		{ID: "INC-OPEN-1", Node: "ip-1", Cgroup: "/a.service", Severity: "P1", State: StateDetected, OpenedAt: t0},
+		{ID: "INC-OPEN-2", Node: "ip-1", Cgroup: "/b.service", Severity: "P1", State: StateReflexApplied, OpenedAt: t0.Add(time.Minute)},
+		{ID: "INC-OPEN-3", Node: "ip-1", Cgroup: "/c.service", Severity: "P2", State: StateWaitingApproval, OpenedAt: t0.Add(2 * time.Minute)},
+		{ID: "INC-DONE-1", Node: "ip-1", Cgroup: "/d.service", Severity: "P1", State: StateResolved, OpenedAt: t0.Add(3 * time.Minute)},
+		{ID: "INC-DONE-2", Node: "ip-1", Cgroup: "/e.service", Severity: "POST_OOM", State: StateEscalated, OpenedAt: t0.Add(4 * time.Minute)},
+		{ID: "INC-DONE-3", Node: "ip-1", Cgroup: "/f.service", Severity: "P2", State: StateDismissed, OpenedAt: t0.Add(5 * time.Minute)},
+		{ID: "INC-DONE-4", Node: "ip-1", Cgroup: "/g.service", Severity: "P2", State: StateExpired, OpenedAt: t0.Add(6 * time.Minute)},
+	}
+	for i := range seed {
+		inc := seed[i]
+		if err := store.CreateIncident(ctx, &inc); err != nil {
+			t.Fatalf("CreateIncident %s: %v", inc.ID, err)
+		}
+	}
+
+	open, err := store.ListOpenIncidents(ctx)
+	if err != nil {
+		t.Fatalf("ListOpenIncidents: %v", err)
+	}
+	if len(open) != 3 {
+		t.Fatalf("expected 3 non-terminal incidents, got %d (%+v)", len(open), open)
+	}
+	if open[0].ID != "INC-OPEN-1" || open[1].ID != "INC-OPEN-2" || open[2].ID != "INC-OPEN-3" {
+		t.Errorf("unexpected chronological open incidents order: %+v", open)
+	}
+}

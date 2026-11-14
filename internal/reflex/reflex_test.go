@@ -27,6 +27,7 @@ type spyPropertyDriver struct {
 	revertCount   atomic.Int32
 	failNextSet   bool
 	failRemaining int
+	errNextSet    error
 }
 
 func newSpyPropertyDriver() *spyPropertyDriver {
@@ -51,6 +52,11 @@ func (s *spyPropertyDriver) SetProperties(_ context.Context, unit string, props 
 	if s.failNextSet {
 		s.failNextSet = false
 		return errors.New("simulated systemd dbus error")
+	}
+	if s.errNextSet != nil {
+		err := s.errNextSet
+		s.errNextSet = nil
+		return err
 	}
 	if s.failRemaining > 0 {
 		s.failRemaining--
@@ -783,4 +789,172 @@ func TestReflex_RollbackRetryWithBackoffAndEscalation(t *testing.T) {
 	if err != nil || escAuditCount != 1 {
 		t.Fatalf("expected 1 REFLEX_ROLLBACK_ESCALATED audit entry, got %d (err=%v)", escAuditCount, err)
 	}
+}
+
+func TestReflex_RollbackUnitNotFoundMarksRolledBackWithoutEscalation(t *testing.T) {
+	t0 := time.Date(2026, 11, 14, 1, 27, 44, 0, time.UTC)
+	now := t0
+	eng, store, mfs, spyProp, incID := setupReflexTestEnv(t, func() time.Time { return now })
+	ctx := context.Background()
+	cgPath := "/sys/fs/cgroup/franken.slice/franken-chaos-workload.service"
+	mfs.SetFile(cgPath+"/memory.current", "40000000\n")
+
+	act, err := eng.ApplyThrottle(ctx, ThrottleRequest{
+		IncidentID:      incID,
+		Unit:            "franken-chaos-workload.service",
+		CgroupPath:      cgPath,
+		MemoryHighBytes: 42 * 1024 * 1024,
+		TTLSeconds:      120,
+	})
+	if err != nil {
+		t.Fatalf("ApplyThrottle: %v", err)
+	}
+
+	// Simulasikan unit transien berhenti dan dibongkar systemd sebelum TTL 120s berakhir
+	spyProp.mu.Lock()
+	spyProp.errNextSet = wrapUnitNotFoundSetPropertyError("franken-chaos-workload.service", 1, "Failed to set unit properties on franken-chaos-workload.service: Unit franken-chaos-workload.service not found.")
+	spyProp.mu.Unlock()
+
+	now = t0.Add(125 * time.Second)
+	swept, err := eng.SweepExpired(ctx)
+	if err != nil {
+		t.Fatalf("expected clean rollback when unit already vanished, got err=%v", err)
+	}
+	if swept != 1 {
+		t.Fatalf("expected 1 expired reflex cleanly closed on vanished unit, got %d", swept)
+	}
+
+	rec, err := store.GetReflexAction(ctx, act.ID)
+	if err != nil {
+		t.Fatalf("GetReflexAction: %v", err)
+	}
+	if rec.Status != "EXPIRED_ROLLED_BACK" {
+		t.Fatalf("expected status EXPIRED_ROLLED_BACK (never FAILED_ROLLBACK), got %s", rec.Status)
+	}
+
+	escCount, err := store.CountAuditByEvent(ctx, incID, "REFLEX_ROLLBACK_ESCALATED")
+	if err != nil || escCount != 0 {
+		t.Fatalf("expected 0 escalation audits when target unit vanished, got %d (err=%v)", escCount, err)
+	}
+	rbCount, err := store.CountAuditByEvent(ctx, incID, "REFLEX_ROLLED_BACK")
+	if err != nil || rbCount != 1 {
+		t.Fatalf("expected 1 REFLEX_ROLLED_BACK audit entry, got %d (err=%v)", rbCount, err)
+	}
+
+	// Uji helper klasifikasi error systemd untuk Unit ... not found vs error lain
+	wrapped := wrapUnitNotFoundSetPropertyError("franken-chaos-workload.service", 1, "Unit franken-chaos-workload.service not found.")
+	if !errors.Is(wrapped, ErrUnitNotFound) {
+		t.Fatalf("expected ErrUnitNotFound wrapping for missing unit stderr, got %v", wrapped)
+	}
+	other := wrapUnitNotFoundSetPropertyError("franken-chaos-workload.service", 1, "Access denied")
+	if errors.Is(other, ErrUnitNotFound) {
+		t.Fatalf("expected non-not-found error not to wrap ErrUnitNotFound, got %v", other)
+	}
+}
+
+type blockingReclaimFS struct {
+	kernelfs.FS
+	started chan struct{}
+	once    sync.Once
+	release chan struct{}
+}
+
+func (b *blockingReclaimFS) WriteFile(filePath string, data []byte) error {
+	if strings.HasSuffix(filePath, "memory.reclaim") {
+		b.once.Do(func() { close(b.started) })
+		<-b.release
+		return nil
+	}
+	return b.FS.WriteFile(filePath, data)
+}
+
+func TestEngine_ApplyReclaim_TimesOutOnBlockedKernelWrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := incident.NewStore(filepath.Join(tmpDir, "reclaim_timeout.db"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	incID := "INC-20261114-1425-pi01"
+	if err := store.CreateIncident(ctx, &incident.Incident{
+		ID:       incID,
+		Node:     "pi01",
+		Cgroup:   "/franken.slice/franken-chaos-workload.service",
+		Severity: "P1",
+		State:    incident.StateDetected,
+	}); err != nil {
+		t.Fatalf("CreateIncident: %v", err)
+	}
+
+	mfs := kernelfs.NewMemFS()
+	cgPath := "/sys/fs/cgroup/franken.slice/franken-chaos-workload.service"
+	mfs.SetFile(cgPath+"/memory.current", "100000000\n")
+
+	release := make(chan struct{})
+	closedRelease := false
+	defer func() {
+		if !closedRelease {
+			close(release)
+		}
+	}()
+	bfs := &blockingReclaimFS{
+		FS:      mfs,
+		started: make(chan struct{}),
+		release: release,
+	}
+
+	cat, _ := policy.LoadCatalog(filepath.Join("..", "..", "policy", "actions.yaml"))
+	spyProp := newSpyPropertyDriver()
+	eng, err := NewEngine(EngineConfig{
+		Store:             store,
+		FS:                bfs,
+		Catalog:           cat,
+		PropertyDriver:    spyProp,
+		AdmissionDriver:   NewFSAdmissionDriver(t.TempDir()),
+		HostMemTotalBytes: 1024 * 1024 * 1024,
+		ReclaimTimeout:    30 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	start := time.Now()
+	_, reclaimErr := eng.ApplyReclaim(ctx, ReclaimRequest{
+		IncidentID: incID,
+		CgroupPath: cgPath,
+		TTLSeconds: 120,
+	})
+	elapsed := time.Since(start)
+	if !errors.Is(reclaimErr, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded when memory.reclaim stalls in kernel, got %v", reclaimErr)
+	}
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("ApplyReclaim blocked too long despite ReclaimTimeout=30ms: %v", elapsed)
+	}
+
+	// Pastikan ApplyThrottle tetap dapat langsung memperoleh lock dan berjalan walau write kernel masih macet
+	if _, thrErr := eng.ApplyThrottle(ctx, ThrottleRequest{
+		IncidentID: incID,
+		Unit:       "franken-chaos-workload.service",
+		CgroupPath: cgPath,
+		TTLSeconds: 120,
+	}); thrErr != nil {
+		t.Fatalf("expected ApplyThrottle to succeed after ApplyReclaim timeout, got %v", thrErr)
+	}
+
+	// Panggilan ApplyReclaim kedua ke cgroupPath yang masih macet harus ditolak seketika (tidak menumpuk goroutine)
+	secondStart := time.Now()
+	_, secondErr := eng.ApplyReclaim(ctx, ReclaimRequest{
+		IncidentID: incID,
+		CgroupPath: cgPath,
+		TTLSeconds: 120,
+	})
+	if secondErr == nil || time.Since(secondStart) > 10*time.Millisecond {
+		t.Fatalf("expected fast fail when same cgroupPath reclaim is still blocked in-flight, got err=%v in %v", secondErr, time.Since(secondStart))
+	}
+
+	close(release)
+	closedRelease = true
 }

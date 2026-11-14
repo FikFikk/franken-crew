@@ -232,6 +232,30 @@ func (s *Store) ListIncidents(ctx context.Context, stateFilter string, limit int
 	return list, rows.Err()
 }
 
+// ListOpenIncidents mengembalikan seluruh insiden non-terminal yang masih terbuka secara kronologis.
+func (s *Store) ListOpenIncidents(ctx context.Context) ([]Incident, error) {
+	rows, err := s.db.QueryContext(ctx, `
+	SELECT id, node, cgroup, severity, state, tto_seconds, opened_at, updated_at, closed_at, triage_json, plan_json
+	FROM incidents
+	WHERE state NOT IN (?, ?, ?, ?)
+	ORDER BY opened_at ASC, id ASC;
+	`, string(StateResolved), string(StateEscalated), string(StateDismissed), string(StateExpired))
+	if err != nil {
+		return nil, fmt.Errorf("list open incidents: %w", err)
+	}
+	defer rows.Close()
+
+	var list []Incident
+	for rows.Next() {
+		inc, scanErr := scanIncident(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan open incident row: %w", scanErr)
+		}
+		list = append(list, inc)
+	}
+	return list, rows.Err()
+}
+
 // ClaimIncident mengklaim insiden terbuka secara atomik menjadi TRIAGING untuk mencegah eksekusi ganda.
 func (s *Store) ClaimIncident(ctx context.Context, incidentID, claimer string) (*Incident, error) {
 	tx, err := s.db.BeginTx(ctx, nil)

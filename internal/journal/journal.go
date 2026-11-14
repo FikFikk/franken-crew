@@ -25,8 +25,8 @@ const (
 )
 
 var (
-	// Pola log OOM killer Linux
-	reOOM = regexp.MustCompile(`(?i)(out of memory|killed process \d+|invoked oom-killer|oom-reaper)`)
+	// Pola log OOM killer Linux maupun pesan terminasi OOM systemd pada UNIT target
+	reOOM = regexp.MustCompile(`(?i)(out of memory|killed process \d+|invoked oom-killer|oom-reaper|kernel oom killer killed|failed with result ['"]?oom-kill['"]?)`)
 	// Pola kegagalan alokasi memori sistem
 	reENOMEM = regexp.MustCompile(`(?i)(cannot allocate memory|\bENOMEM\b|page allocation failure)`)
 	// Pola kehabisan heap pada runtime aplikasi (Node.js, Go runtime, JVM)
@@ -39,6 +39,7 @@ var (
 type JournalEntry struct {
 	Message           string `json:"MESSAGE"`
 	SystemdUnit       string `json:"_SYSTEMD_UNIT"`
+	Unit              string `json:"UNIT"`
 	Comm              string `json:"_COMM"`
 	PID               string `json:"_PID"`
 	RealtimeTimestamp string `json:"__REALTIME_TIMESTAMP"`
@@ -112,10 +113,16 @@ func Stream(ctx context.Context, r io.Reader, out chan<- JournalEvent) error {
 			ts = time.Now()
 		}
 
+		unitName := entry.SystemdUnit
+		// Pesan systemd (PID 1) mencatat OOM milik service dengan _SYSTEMD_UNIT="init.scope" dan UNIT="<unit>.service"
+		if entry.Unit != "" && (unitName == "" || unitName == "init.scope") {
+			unitName = entry.Unit
+		}
+
 		event := JournalEvent{
 			Category:  category,
 			Message:   redactedMsg,
-			Unit:      entry.SystemdUnit,
+			Unit:      unitName,
 			Comm:      entry.Comm,
 			PID:       pid,
 			Timestamp: ts,
@@ -132,14 +139,22 @@ func Stream(ctx context.Context, r io.Reader, out chan<- JournalEvent) error {
 	return scanner.Err()
 }
 
-// StartJournalctlStream menjalankan proses `journalctl --follow --output=json` untuk unit tertentu dan mengalirkan event-nya.
-func StartJournalctlStream(ctx context.Context, units []string, out chan<- JournalEvent) error {
-	args := []string{"--follow", "--output=json"}
+// buildJournalctlArgs menyusun argumen `journalctl` live-tail tanpa mengulang log historis saat restart.
+func buildJournalctlArgs(units []string) []string {
+	args := []string{"--follow", "--lines=0", "--output=json"}
 	for _, u := range units {
 		args = append(args, "--unit="+u)
 	}
+	return args
+}
+
+// StartJournalctlStream menjalankan proses `journalctl --follow --lines=0 --output=json` untuk unit tertentu dan mengalirkan event-nya.
+func StartJournalctlStream(ctx context.Context, units []string, out chan<- JournalEvent) error {
+	args := buildJournalctlArgs(units)
 
 	cmd := exec.CommandContext(ctx, "journalctl", args...)
+	// Batasi waktu tunggu proses anak saat ctx dibatalkan agar daemon tidak terkena timeout SIGKILL systemd
+	cmd.WaitDelay = 2 * time.Second
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("open journalctl pipe: %w", err)
@@ -149,9 +164,14 @@ func StartJournalctlStream(ctx context.Context, units []string, out chan<- Journ
 		return fmt.Errorf("start journalctl: %w", err)
 	}
 
-	go func() {
-		_ = cmd.Wait()
-	}()
-
-	return Stream(ctx, stdout, out)
+	streamErr := Stream(ctx, stdout, out)
+	// Panggil Wait setelah Stream selesai membaca pipe sesuai kontrak os/exec.StdoutPipe
+	waitErr := cmd.Wait()
+	if ctx.Err() != nil {
+		return nil
+	}
+	if streamErr != nil {
+		return streamErr
+	}
+	return waitErr
 }

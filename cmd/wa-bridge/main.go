@@ -95,7 +95,7 @@ func registerBridgeFlags(fs *flag.FlagSet, f *bridgeFlags) {
 	fs.StringVar(&f.privKeyPath, "priv-key", "keys/bridge-ed25519.key", "path to Ed25519 0600 private key PEM")
 	fs.StringVar(&f.adminsCSV, "admins", "", "comma-separated admin WhatsApp phone numbers or JIDs (required)")
 	fs.StringVar(&f.targetJID, "target", "", "override destination JID/group for alerts (defaults to first admin)")
-	fs.StringVar(&f.nodeName, "node", "node01", "monitored Sentinel node name")
+	fs.StringVar(&f.nodeName, "node", "", "monitored Sentinel node name (auto-detected from Sentinel /healthz or OS hostname when empty)")
 	fs.StringVar(&f.mcpListen, "mcp-listen", defaultWAMCPListenAddr(), "listen address for single-owner MCP HTTP endpoint (empty disables HTTP MCP server)")
 	fs.DurationVar(&f.heartbeatEvery, "heartbeat-interval", wabridge.DefaultHeartbeatInterval, "Sentinel heartbeat watch interval")
 	fs.IntVar(&f.missedMax, "missed-heartbeats", wabridge.DefaultMaxMissedHeartbeats, "consecutive missed heartbeats before Node Silent Alert")
@@ -191,7 +191,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		httpSrv := &http.Server{
-			Handler:           buildServeHTTPHandler(bridge, cfg.nodeName, bearerToken),
+			Handler:           buildServeHTTPHandler(bridge, bearerToken),
 			ReadHeaderTimeout: 10 * time.Second,
 		}
 		httpErrCh = make(chan error, 1)
@@ -212,7 +212,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 
 	fmt.Fprintf(stdout, "wa-bridge running (sentinel=%s, node=%s, heartbeat=%s x %d)\n",
-		cfg.sentinelURL, cfg.nodeName, cfg.heartbeatEvery, cfg.missedMax)
+		cfg.sentinelURL, bridge.NodeName(), cfg.heartbeatEvery, cfg.missedMax)
 
 	if err := bridge.Run(runCtx); err != nil {
 		fmt.Fprintf(stderr, "wa-bridge runtime error: %v\n", err)
@@ -278,7 +278,7 @@ func runMCPStdioWithTransport(args []string, transport mcp.Transport, stderr io.
 	return 0
 }
 
-func buildServeHTTPHandler(bridge *wabridge.Bridge, nodeName, bearerToken string) http.Handler {
+func buildServeHTTPHandler(bridge *wabridge.Bridge, bearerToken string) http.Handler {
 	mcpSrv := bridge.NewMCPServer()
 	streamable := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server {
 		return mcpSrv
@@ -298,11 +298,30 @@ func buildServeHTTPHandler(bridge *wabridge.Bridge, nodeName, bearerToken string
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status": "ok",
-			"node":   nodeName,
+			"node":   bridge.NodeName(),
 		})
 	})
 	mux.Handle("/mcp", mcpserver.BearerAuthMiddleware(bearerToken, streamable))
 	return mux
+}
+
+// resolveBridgeNodeName menentukan nama node Sentinel awal dari flag eksplisit, endpoint /healthz, atau hostname OS.
+func resolveBridgeNodeName(configured string, client *wabridge.SentinelClient) string {
+	if trimmed := strings.TrimSpace(configured); trimmed != "" {
+		return trimmed
+	}
+	if client != nil {
+		probeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		hz, err := client.CheckHealthz(probeCtx)
+		cancel()
+		if err == nil && strings.TrimSpace(hz.Node) != "" {
+			return strings.TrimSpace(hz.Node)
+		}
+	}
+	if host, err := os.Hostname(); err == nil && strings.TrimSpace(host) != "" {
+		return strings.TrimSpace(host)
+	}
+	return "node01"
 }
 
 func buildBridgeRuntime(cfg bridgeFlags, stderr io.Writer, onFatal func(error)) (*wabridge.Bridge, string, func(), error) {
@@ -361,7 +380,7 @@ func buildBridgeRuntime(cfg bridgeFlags, stderr io.Writer, onFatal func(error)) 
 	}
 
 	bridge, err := wabridge.New(wabridge.Config{
-		NodeName:            cfg.nodeName,
+		NodeName:            resolveBridgeNodeName(cfg.nodeName, sentinelClient),
 		AdminAllowlist:      admins,
 		TargetJID:           cfg.targetJID,
 		Minter:              minter,

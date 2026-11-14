@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1681,5 +1682,81 @@ func TestMCP_ProcessTerminateBlocksDynamicProtectedPID(t *testing.T) {
 				t.Fatalf("expected IsError=true when targeting protected pid %d", tc.pid)
 			}
 		})
+	}
+}
+
+func TestMCP_ListenAndServe_ClosesActiveSSEFastOnCancel(t *testing.T) {
+	store, err := incident.NewStore(filepath.Join(t.TempDir(), "sse_shutdown.db"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	cat, _ := policy.LoadCatalog(filepath.Join("..", "..", "policy", "actions.yaml"))
+	mfs := kernelfs.NewMemFS()
+	mfs.SetFile("/sys/fs/cgroup/cgroup.controllers", "cpu memory\n")
+	mfs.SetFile("/proc/pressure/memory", "some avg10=0.10 avg60=0.10 avg300=0.10 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n")
+
+	srv, err := New(Config{
+		NodeName:    "pi-sse-shut",
+		Store:       store,
+		Catalog:     cat,
+		FS:          mfs,
+		BearerToken: "sse-shutdown-tok",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Cari port ephemeral kosong pada 127.0.0.1 agar test aman paralel
+	probeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen ephemeral: %v", err)
+	}
+	addr := probeLn.Addr().String()
+	_ = probeLn.Close()
+
+	listenCtx, listenCancel := context.WithCancel(context.Background())
+	defer listenCancel()
+
+	doneCh := make(chan error, 1)
+	go func() {
+		doneCh <- srv.ListenAndServe(listenCtx, addr)
+	}()
+
+	// Tunggu HTTP server siap lalu buka koneksi SSE jangka panjang di /v1/events
+	var sseResp *http.Response
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		req, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/v1/events", nil)
+		req.Header.Set("Authorization", "Bearer sse-shutdown-tok")
+		resp, reqErr := http.DefaultClient.Do(req)
+		if reqErr == nil {
+			sseResp = resp
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	if sseResp == nil {
+		t.Fatalf("failed to connect active SSE stream to %s", addr)
+	}
+	defer func() { _ = sseResp.Body.Close() }()
+	if sseResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for /v1/events, got %d", sseResp.StatusCode)
+	}
+
+	// Saat SIGTERM/ctx batal, ListenAndServe tidak boleh tersangkut 5 detik menunggu SSE idle
+	start := time.Now()
+	listenCancel()
+	select {
+	case serveErr := <-doneCh:
+		if serveErr != nil {
+			t.Fatalf("ListenAndServe returned unexpected error: %v", serveErr)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatalf("ListenAndServe hung for >=1s closing active SSE stream")
+	}
+	if elapsed := time.Since(start); elapsed > 900*time.Millisecond {
+		t.Errorf("shutdown took too long with active SSE stream: %s", elapsed)
 	}
 }

@@ -87,8 +87,8 @@ flowchart TD
 | jenis         | cgroup_throttle / cgroup_reclaim / admission_close | Semua reversible                                                        |
 | MemoryHigh    | ≥ pemakaian saat ini, ≤ 95% RAM host               | Membatasi pertumbuhan, bukan memaksa shrink                             |
 | CPUQuota      | Opsional kuota CPU; baseline unset → `CPUQuota=`   | Saat rollback baseline unset, kirim `CPUQuota=` (bukan `infinity`)      |
-| reclaim bytes | ≤ 25% memory.current                               | Per cgroup, bukan global                                                |
-| TTL           | ≤ 15 menit                                         | Rollback otomatis; kegagalan dicoba ulang via exponential backoff       |
+| reclaim bytes | ≤ 25% memory.current                               | Per cgroup, dibatasi timeout 200 ms agar write sinkron tanpa swap tidak menahan throttle |
+| TTL           | ≤ 15 menit                                         | Rollback otomatis; unit transien lenyap ditandai `EXPIRED_ROLLED_BACK`; kegagalan dicoba ulang via exponential backoff |
 
 ## 3. Tabel Transisi Status
 
@@ -98,6 +98,8 @@ flowchart TD
 | ------------------- | ----------------- | --------------------------------------- |
 | —                   | DETECTED          | Severity P1/P2/POST_OOM                 |
 | DETECTED            | REFLEXED          | Aksi L1 diterapkan                      |
+| DETECTED / REFLEXED | VERIFYING         | Target cgroup unit transien hilang dari filesystem sebelum hysteresis selesai |
+| DETECTED / REFLEXED | ESCALATED         | Kernel OOM (`EventsDelta` / `systemd` journal OOM) pada unit transien yang langsung lenyap |
 | DETECTED / REFLEXED | TRIAGING          | Diklaim cron `incident-sweep`           |
 | TRIAGING            | PLANNED           | Plan lolos validasi policy              |
 | TRIAGING            | ESCALATED         | Confidence < 0.6 atau revisi plan habis |
@@ -126,7 +128,7 @@ flowchart TD
 | Dari    | Ke                  | Pemicu                                |
 | ------- | ------------------- | ------------------------------------- |
 | —       | APPLIED             | Detector P1/P2 dan policy mengizinkan |
-| APPLIED | ROLLED_BACK         | Incident RESOLVED                     |
+| APPLIED | ROLLED_BACK         | Incident RESOLVED, atau target unit sudah tidak ditemukan (`target_absent: true`) tanpa retry/eskalasi |
 | APPLIED | EXPIRED_ROLLED_BACK | TTL habis                             |
 | APPLIED | FAILED_ROLLBACK     | Gagal rollback melampaui batas retry (5x backoff) → eskalasi & alert manusia |
 
@@ -156,3 +158,4 @@ flowchart TD
 | Trigger: triage      | Cron `incident-sweep` setiap menit                                                                                     |
 | Trigger: digest      | Cron `morning-digest` pukul 07:00 waktu lokal                                                                          |
 | Trigger: postmortem  | Incident mencapai state terminal                                                                                       |
+| Startup Sentinel     | Rekonsiliasi `ListOpenIncidents` terhadap cgroup aktif: pulihkan detektor target hidup atau tutup target yang lenyap     |

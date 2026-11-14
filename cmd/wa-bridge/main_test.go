@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -164,7 +165,7 @@ func TestWABridge_MCPStdioProxy_SingleOwnerHTTP(t *testing.T) {
 		t.Fatalf("wabridge.New: %v", err)
 	}
 
-	httpSrv := httptest.NewServer(buildServeHTTPHandler(bridge, "pi-single", "proxy-secret-tok"))
+	httpSrv := httptest.NewServer(buildServeHTTPHandler(bridge, "proxy-secret-tok"))
 	defer httpSrv.Close()
 
 	// Pastikan `/mcp` menolak akses tanpa Bearer token
@@ -214,5 +215,68 @@ func TestWABridge_MCPStdioProxy_SingleOwnerHTTP(t *testing.T) {
 	}
 	if len(messenger.sentTexts) != 1 || !strings.Contains(messenger.sentTexts[0], "single-owner delivery verified") {
 		t.Fatalf("expected single-owner serve messenger to receive proxied notification, got %+v", messenger.sentTexts)
+	}
+}
+
+func TestWABridge_NodeNameAutoResolvedAndDynamicHealthz(t *testing.T) {
+	// 1. Jika --node kosong, resolveBridgeNodeName mengambil Node dari /healthz Sentinel sebelum fallback ke hostname
+	sentinelSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","node":"ip-172-31-45-195","capabilities":["cgroup_v2","psi"]}`))
+	}))
+	defer sentinelSrv.Close()
+
+	sentinelClient, err := wabridge.NewSentinelClient(sentinelSrv.URL, "tok-test")
+	if err != nil {
+		t.Fatalf("NewSentinelClient: %v", err)
+	}
+	defer func() { _ = sentinelClient.Close() }()
+
+	if got := resolveBridgeNodeName("", sentinelClient); got != "ip-172-31-45-195" {
+		t.Fatalf("expected resolveBridgeNodeName to use Sentinel /healthz node, got %q", got)
+	}
+	if got := resolveBridgeNodeName("custom-node", sentinelClient); got != "custom-node" {
+		t.Fatalf("expected explicit --node flag to take precedence, got %q", got)
+	}
+
+	// 2. Endpoint /healthz wa-bridge membaca NodeName secara dinamis dari instance Bridge
+	tmp := t.TempDir()
+	privPath, _, _, err := approval.InitKeys(filepath.Join(tmp, "keys"), false)
+	if err != nil {
+		t.Fatalf("InitKeys: %v", err)
+	}
+	privKey, err := approval.LoadPrivateKey(privPath)
+	if err != nil {
+		t.Fatalf("LoadPrivateKey: %v", err)
+	}
+	minter, err := approval.NewMinter(privKey, nil)
+	if err != nil {
+		t.Fatalf("NewMinter: %v", err)
+	}
+	bridge, err := wabridge.New(wabridge.Config{
+		NodeName:       "initial-node",
+		AdminAllowlist: []string{"6281234567890"},
+		Minter:         minter,
+		Sentinel:       sentinelClient,
+		Messenger:      &fakeMessenger{},
+	})
+	if err != nil {
+		t.Fatalf("wabridge.New: %v", err)
+	}
+
+	httpSrv := httptest.NewServer(buildServeHTTPHandler(bridge, "tok-test"))
+	defer httpSrv.Close()
+
+	resp, err := http.Get(httpSrv.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode /healthz: %v", err)
+	}
+	if payload["node"] != "initial-node" {
+		t.Errorf("expected /healthz node=initial-node, got %v", payload["node"])
 	}
 }

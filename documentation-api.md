@@ -11,7 +11,7 @@
 | Headers           | —                                                                                        |
 | Query Params      | —                                                                                        |
 | Request Body      | —                                                                                        |
-| Response          | `200` `{status, version, uptime_s, capabilities[]}` · `503` jika capability wajib hilang |
+| Response          | `200` `{status, node, version, uptime_s, capabilities[]}` · `503` jika capability wajib hilang |
 | Notes             | Dipakai systemd watchdog dan heartbeat wa-bridge                                         |
 
 | Field             | Detail                                                                                                                                  |
@@ -22,7 +22,7 @@
 | Query Params      | `since` (string, opsional, event id terakhir untuk resume)                                                                              |
 | Request Body      | —                                                                                                                                       |
 | Response          | `200` stream SSE: `incident.opened`, `incident.updated`, `reflex.applied`, `reflex.rolled_back`, `heartbeat` (15 s) · `401` token salah |
-| Notes             | Payload (summary, map, dan slice bersarang) sudah diredaksi (`sk-...`, `08xx`/`+628xx` tanpa menyensor metrik numerik); mendukung header `Last-Event-ID` |
+| Notes             | Payload (summary, map, dan slice bersarang) sudah diredaksi (`sk-...`, `08xx`/`+628xx` tanpa menyensor metrik numerik); mendukung header `Last-Event-ID` & auto-reset kursor bila `sinceID > nextID` pasca-restart Sentinel |
 
 | Field             | Detail                                                                                                                             |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
@@ -73,15 +73,15 @@
 
 ## 2. wa-bridge (`cmd/wa-bridge` + `internal/wabridge`)
 
-| Field             | Detail                                  |
-| ----------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Method + Endpoint | `GET /healthz` (localhost, **rencana**) |
-| Auth Required     | Tidak                                   |
-| Headers           | —                                       |
-| Query Params      | —                                       |
-| Request Body      | —                                       |
-| Response          | `200` `{whatsapp: connected             | logged_out, nodes: [{name, last_heartbeat}]}`(belum diekspos HTTP pada`cmd/wa-bridge`; monitoring heartbeat aktif berjalan ke `GET /healthz` Sentinel) |
-| Notes             | Tidak diekspos keluar host Brain        |
+| Field             | Detail                                                                                   |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| Method + Endpoint | `GET /healthz` (localhost, aktif saat `--mcp-listen` terpasang)                          |
+| Auth Required     | Tidak                                                                                    |
+| Headers           | —                                                                                        |
+| Query Params      | —                                                                                        |
+| Request Body      | —                                                                                        |
+| Response          | `200` `{status: "ok", node}` (`node` sinkron otomatis dari `/healthz` Sentinel & SSE)    |
+| Notes             | Hanya mendengarkan localhost (`127.0.0.1` / `::1`) untuk proxy `wa-bridge mcp`           |
 
 ### 2.1 wa-bridge MCP Tools (`wa-bridge mcp` via stdio)
 
@@ -96,7 +96,7 @@
 
 | Command           | Flag Utama                                                                                                                                          | Fungsi                                                                                                                                                                                                                                                            | Exit Code / Catatan                                                                                      |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `wa-bridge serve` | `--wa-db`, `--sentinel`, `--token-env`, `--priv-key`, `--admins`, `--target`, `--node`, `--heartbeat-interval`, `--missed-heartbeats`, `--poll-ttl`, `--mcp-listen`, `--crew-webhook-url` (env `FRANKEN_CREW_WEBHOOK_URL`), `--crew-token-env` (default `KIROCREW_TOKEN`), `--crew-agent` | Pemilik tunggal sesi WA: konsumsi SSE `/v1/events`, alert < 2 s, picu fase Crew (`TRIAGE`, `EXECUTE`), Native Poll yang labelnya dibangun dari plan tersimpan, mint satu token Ed25519 per langkah, laporan akhir saat `verification.completed`, heartbeat watcher `15s x 3` | Fail-fast `1` jika token env kosong, `--admins` kosong, private key invalid, sesi WA belum QR login, atau webhook Crew diset tanpa token / ke HTTP publik |
+| `wa-bridge serve` | `--wa-db`, `--sentinel`, `--token-env`, `--priv-key`, `--admins`, `--target`, `--node` (default kosong = auto-detect dari `/healthz` Sentinel / hostname), `--heartbeat-interval`, `--missed-heartbeats`, `--poll-ttl`, `--mcp-listen`, `--crew-webhook-url` (env `FRANKEN_CREW_WEBHOOK_URL`), `--crew-token-env` (default `KIROCREW_TOKEN`), `--crew-agent` | Pemilik tunggal sesi WA: konsumsi SSE `/v1/events`, alert < 2 s, picu fase Crew (`TRIAGE`, `EXECUTE`), Native Poll yang labelnya dibangun dari plan tersimpan, mint satu token Ed25519 per langkah, laporan akhir saat `verification.completed`, heartbeat watcher `15s x 3` | Fail-fast `1` jika token env kosong, `--admins` kosong, private key invalid, sesi WA belum QR login, atau webhook Crew diset tanpa token / ke HTTP publik |
 | `wa-bridge login` | `--db`, `--relogin`, `--timeout` (default `3m`)                                                                                                     | Pairing QR WhatsApp di terminal & sinkronisasi pasca-515 (ekuivalen `franken wa-login`)                                                                                                                                                                           | `0` paired · `1` gagal pairing                                                                           |
 | `wa-bridge mcp`   | Sama dengan `wa-bridge serve`                                                                                                                       | Jalankan runtime bridge + expose 4 MCP tool WhatsApp via `stdin`/`stdout`                                                                                                                                                                                         | Untuk integrasi agen Kiro Crew                                                                           |
 
@@ -157,4 +157,4 @@ Catatan: rancangan awal endpoint `/api/nodes`, `/api/incidents`, `/api/incidents
 | Timer internal wa-bridge        | Setiap 15 s               | Cek heartbeat Sentinel                                                        | Alert `node silent` setelah 3 kali gagal                                    |
 | Timer internal Sentinel         | Per TTL reflex            | Rollback aksi L1                                                              | Mengembalikan `MemoryHigh` / admission                                      |
 | Background worker `verify_health` | Per `VerifyPollInterval` (default 5 s) selama jendela observasi | Mengumpulkan sampel metrik forward pasca L2; stabil bila PSI rendah dan proyeksi TTO (slope least-squares 60 s terakhir vs `memory.max`/MemTotal−64 MiB) ≥ 600 s | `REMEDIATING` → `VERIFYING` → `RESOLVED`/`ESCALATED`, rollback refleks L1, postmortem otomatis (`--postmortem-dir`), SSE `verification.completed` (`status`, `rolled_back`, `failure_reasons`, `postmortem_path`) yang memicu laporan akhir WA |
-| Rediscovery target Sentinel | `--rediscover-interval` (default 10 s) | Memantau cgroup leaf `*.service` baru di `franken.slice`/`system.slice` | SSE `telemetry.target_added`/`telemetry.target_removed`, audit `TARGET_ADDED`/`TARGET_REMOVED` |
+| Rediscovery target Sentinel | `--rediscover-interval` (default 10 s) | Memantau cgroup leaf `*.service` baru di `franken.slice`/`system.slice` & menutup insiden target transien yang lenyap | SSE `telemetry.target_added`/`telemetry.target_removed`, audit `TARGET_*`, rekonsiliasi startup & penangkapan OOM target lenyap via journal `--lines=0` + `EventsDelta` |

@@ -242,23 +242,7 @@ func (d *Detector) Evaluate(s Sample) Evaluation {
 
 	// Kelola siklus hidup insiden (P2, P1, POST_OOM) beserta hysteresis dan debounce
 	if !st.incidentOpen {
-		if rawSeverity.Rank() >= SeverityP2.Rank() {
-			st.incidentOpen = true
-			st.activeSeverity = rawSeverity
-			st.healthySince = time.Time{}
-
-			if !st.lastClosedAt.IsZero() && s.At.Sub(st.lastClosedAt) < d.cfg.DebounceDuration && st.lastClosedID != "" {
-				// Debounce aktif: gunakan kembali ID insiden sebelumnya
-				st.activeID = st.lastClosedID
-				eval.Reopened = true
-			} else {
-				st.activeID = d.nextIncidentID(s.At)
-				eval.Reopened = false
-			}
-			eval.IncidentOpen = true
-			eval.IncidentID = st.activeID
-			eval.Severity = st.activeSeverity
-		}
+		d.applyOpenOrReopen(st, rawSeverity, s.At, &eval)
 		return eval
 	}
 
@@ -293,6 +277,109 @@ func (d *Detector) Evaluate(s Sample) Evaluation {
 		st.healthySince = time.Time{}
 	}
 
+	eval.Severity = st.activeSeverity
+	eval.IncidentOpen = true
+	eval.IncidentID = st.activeID
+	return eval
+}
+
+// applyOpenOrReopen membuka atau me-reopen insiden pada state cgroup bila tingkat keparahan mencapai minimal P2.
+func (d *Detector) applyOpenOrReopen(st *cgroupState, rawSeverity Severity, at time.Time, eval *Evaluation) {
+	if rawSeverity.Rank() < SeverityP2.Rank() {
+		return
+	}
+	st.incidentOpen = true
+	st.activeSeverity = rawSeverity
+	st.healthySince = time.Time{}
+
+	if !st.lastClosedAt.IsZero() && at.Sub(st.lastClosedAt) < d.cfg.DebounceDuration && st.lastClosedID != "" {
+		// Debounce aktif: gunakan kembali ID insiden sebelumnya
+		st.activeID = st.lastClosedID
+		eval.Reopened = true
+	} else {
+		st.activeID = d.nextIncidentID(at)
+		eval.Reopened = false
+	}
+	eval.IncidentOpen = true
+	eval.IncidentID = st.activeID
+	eval.Severity = st.activeSeverity
+}
+
+// ForgetCgroup menghapus seluruh state deteksi cgroup yang sudah hilang dari kernel agar kemunculan kembali
+// unit transien/baru tidak tertelan oleh status incidentOpen lama.
+func (d *Detector) ForgetCgroup(cgroup string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	st, ok := d.states[cgroup]
+	if !ok {
+		return false
+	}
+	wasOpen := st.incidentOpen
+	delete(d.states, cgroup)
+	return wasOpen
+}
+
+// RestoreOpenIncident memulihkan status insiden terbuka dari SQLite setelah daemon restart untuk target hidup
+// agar Evaluator tidak membuka insiden duplikat bagi insiden yang masih berlangsung.
+func (d *Detector) RestoreOpenIncident(cgroup, incidentID string, severity Severity) {
+	if cgroup == "" || incidentID == "" {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	st, ok := d.states[cgroup]
+	if !ok {
+		st = &cgroupState{}
+		d.states[cgroup] = st
+	}
+	st.incidentOpen = true
+	st.activeID = incidentID
+	if severity.Rank() > st.activeSeverity.Rank() {
+		st.activeSeverity = severity
+	}
+	st.healthySince = time.Time{}
+}
+
+// ObserveDelta mengevaluasi kenaikan delta memory.events secara langsung (misalnya ketika inotify/journal mendeteksi
+// OOM kill tepat sebelum systemd menghapus direktori cgroup unit transien).
+func (d *Detector) ObserveDelta(cgroup string, current, delta MemoryEvents, limitBytes uint64, at time.Time) Evaluation {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if at.IsZero() {
+		at = time.Now()
+	}
+	st, ok := d.states[cgroup]
+	if !ok {
+		st = &cgroupState{}
+		d.states[cgroup] = st
+	}
+	if !st.initialized {
+		st.initialized = true
+	}
+	if at.After(st.lastAt) {
+		st.lastAt = at
+	}
+	st.lastEvents = current
+
+	rawSeverity := classifyRawSeverity(nil, 0, 0, false, delta.Max, delta.OOM, delta.OOMKill)
+	limit := d.effectiveLimit(limitBytes)
+	eval := Evaluation{
+		Cgroup:         cgroup,
+		Severity:       rawSeverity,
+		RawSeverity:    rawSeverity,
+		SlopeBytesPerS: st.ewmaSlope,
+		LimitBytes:     limit,
+		At:             at,
+	}
+
+	if !st.incidentOpen {
+		d.applyOpenOrReopen(st, rawSeverity, at, &eval)
+		return eval
+	}
+	if rawSeverity.Rank() > st.activeSeverity.Rank() {
+		st.activeSeverity = rawSeverity
+	}
 	eval.Severity = st.activeSeverity
 	eval.IncidentOpen = true
 	eval.IncidentID = st.activeID

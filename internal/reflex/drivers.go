@@ -162,9 +162,23 @@ func (d *ExecutorPropertyDriver) SetProperties(ctx context.Context, unit string,
 		return fmt.Errorf("systemctl set-property %s: %w", unit, err)
 	}
 	if res.ExitCode != 0 {
-		return fmt.Errorf("systemctl set-property %s exited %d: %s", unit, res.ExitCode, strings.TrimSpace(res.Stderr))
+		return wrapUnitNotFoundSetPropertyError(unit, res.ExitCode, strings.TrimSpace(res.Stderr))
 	}
 	return nil
+}
+
+// wrapUnitNotFoundSetPropertyError membungkus kegagalan systemctl set-property dengan ErrUnitNotFound
+// ketika stderr menunjukkan unit sudah tidak aktif/tidak ditemukan di systemd.
+func wrapUnitNotFoundSetPropertyError(unit string, exitCode int, stderr string) error {
+	trimmed := strings.TrimSpace(stderr)
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "not found") ||
+		strings.Contains(lower, "no such unit") ||
+		strings.Contains(lower, "not loaded") ||
+		strings.Contains(lower, "unit does not exist") {
+		return fmt.Errorf("%w: systemctl set-property %s exited %d: %s", ErrUnitNotFound, unit, exitCode, trimmed)
+	}
+	return fmt.Errorf("systemctl set-property %s exited %d: %s", unit, exitCode, trimmed)
 }
 
 // FSAdmissionDriver mengelola berkas status admission di direktori runtime (/run/franken/<app>/admission).

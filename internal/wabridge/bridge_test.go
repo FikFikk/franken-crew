@@ -879,6 +879,49 @@ func TestBridge_HeartbeatMonitor_ThreeMissedSendsNodeSilentAlert(t *testing.T) {
 	}
 }
 
+func TestBridge_CheckHeartbeatOnceSyncsNodeNameFromHealthz(t *testing.T) {
+	_, _, _, minter, _, ts := setupSentinelHarness(t)
+	messenger := newMockMessenger()
+
+	sentinelClient, err := NewSentinelClient(ts.URL, "bridge-test-token")
+	if err != nil {
+		t.Fatalf("NewSentinelClient: %v", err)
+	}
+	defer func() { _ = sentinelClient.Close() }()
+
+	var mu sync.Mutex
+	baseNow := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	curNow := baseNow
+
+	bridge, err := New(Config{
+		NodeName:          "node01",
+		AdminAllowlist:    []string{"6281234567890"},
+		Minter:            minter,
+		Sentinel:          sentinelClient,
+		Messenger:         messenger,
+		HeartbeatInterval: 15 * time.Second,
+		Clock: func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			return curNow
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Lewati jendela heartbeat agar CheckHeartbeatOnce memanggil /healthz Sentinel (Node="pi-wa-test")
+	mu.Lock()
+	curNow = baseNow.Add(16 * time.Second)
+	mu.Unlock()
+
+	bridge.CheckHeartbeatOnce(context.Background())
+
+	if got := bridge.NodeName(); got != "pi-wa-test" {
+		t.Fatalf("expected NodeName synced from /healthz to 'pi-wa-test', got %q", got)
+	}
+}
+
 func TestBridge_RateLimitAndMCPStdioTools(t *testing.T) {
 	store, _, _, minter, _, ts := setupSentinelHarness(t)
 	messenger := newMockMessenger()

@@ -39,6 +39,18 @@ func TestMatchPattern_AllCategories(t *testing.T) {
 			wantPass: true,
 		},
 		{
+			name:     "Systemd OOM killer unit message",
+			msg:      "franken-chaos-workload.service: The kernel OOM killer killed some processes in this unit.",
+			wantCat:  PatternOOM,
+			wantPass: true,
+		},
+		{
+			name:     "Systemd result oom-kill message",
+			msg:      "franken-chaos-workload.service: Failed with result 'oom-kill'.",
+			wantCat:  PatternOOM,
+			wantPass: true,
+		},
+		{
 			name:     "Normal application log",
 			msg:      "HTTP GET /api/v1/health 200 OK duration=1.2ms",
 			wantPass: false,
@@ -109,5 +121,45 @@ func TestStream_ParsesJSONAndRedactsSecrets(t *testing.T) {
 	}
 	if ev2.Unit != "pm2-root.service" {
 		t.Errorf("expected pm2-root.service, got %s", ev2.Unit)
+	}
+}
+
+func TestStream_ParsesSystemdInitScopeOOMWithUNITField(t *testing.T) {
+	sample := `{"_SYSTEMD_UNIT":"init.scope","_COMM":"systemd","_PID":"1","UNIT":"franken-chaos-workload.service","MESSAGE":"franken-chaos-workload.service: The kernel OOM killer killed some processes in this unit.","__REALTIME_TIMESTAMP":"1700000003000000"}
+{"_SYSTEMD_UNIT":"init.scope","_COMM":"systemd","_PID":"1","UNIT":"franken-chaos-workload.service","MESSAGE":"franken-chaos-workload.service: Failed with result 'oom-kill'.","__REALTIME_TIMESTAMP":"1700000004000000"}
+`
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	out := make(chan JournalEvent, 4)
+	go func() {
+		_ = Stream(ctx, strings.NewReader(sample), out)
+		close(out)
+	}()
+
+	var events []JournalEvent
+	for ev := range out {
+		events = append(events, ev)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 OOM events, got %d", len(events))
+	}
+	for i, ev := range events {
+		if ev.Category != PatternOOM {
+			t.Errorf("event %d: expected PatternOOM, got %s", i, ev.Category)
+		}
+		if ev.Unit != "franken-chaos-workload.service" {
+			t.Errorf("event %d: expected UNIT=franken-chaos-workload.service instead of _SYSTEMD_UNIT init.scope, got %q", i, ev.Unit)
+		}
+	}
+}
+
+func TestBuildJournalctlArgs_IncludesLinesZero(t *testing.T) {
+	args := buildJournalctlArgs([]string{"haunted-api.service", "franken-chaos-workload.service"})
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--follow", "--lines=0", "--output=json", "--unit=haunted-api.service", "--unit=franken-chaos-workload.service"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("expected %q in journalctl args %v", want, args)
+		}
 	}
 }

@@ -272,3 +272,88 @@ func TestDetector_HostLimitFallbackWhenMemoryMaxUnset(t *testing.T) {
 		t.Errorf("expected fallback host limit %d, got %d", expectedLimit, eval.LimitBytes)
 	}
 }
+
+func TestDetector_ForgetCgroupAllowsFreshIncident(t *testing.T) {
+	det := NewDetector(Config{
+		NodeName:          "pi01",
+		HostMemTotalBytes: 2 * gib,
+	})
+
+	t0 := time.Date(2026, 11, 14, 4, 29, 0, 0, time.UTC)
+	cg := "/franken.slice/franken-chaos-workload.service"
+
+	// Insiden pertama terbuka via PSI/TTO
+	eval1 := det.Evaluate(Sample{
+		Cgroup:        cg,
+		MemoryCurrent: 150 * mib,
+		MemoryMax:     200 * mib,
+		PSISomeAvg10:  35.0,
+		At:            t0,
+	})
+	if !eval1.IncidentOpen || eval1.IncidentID == "" {
+		t.Fatalf("expected first incident open, got %+v", eval1)
+	}
+
+	// Unit transien berhenti: cgroup dihapus sebelum hysteresis 120 detik selesai
+	if !det.ForgetCgroup(cg) {
+		t.Fatalf("expected ForgetCgroup to report previously open incident")
+	}
+	if det.ForgetCgroup(cg) {
+		t.Fatalf("expected second ForgetCgroup on already removed cgroup to return false")
+	}
+
+	// Unit transien dijalankan ulang 10 detik kemudian: harus membuka insiden baru yang bersih
+	evalBaseline := det.Evaluate(Sample{
+		Cgroup:        cg,
+		MemoryCurrent: 10 * mib,
+		MemoryMax:     200 * mib,
+		At:            t0.Add(10 * time.Second),
+	})
+	if evalBaseline.IncidentOpen {
+		t.Fatalf("expected fresh baseline after ForgetCgroup, got open=%+v", evalBaseline)
+	}
+
+	eval2 := det.Evaluate(Sample{
+		Cgroup:        cg,
+		MemoryCurrent: 185 * mib,
+		MemoryMax:     200 * mib,
+		At:            t0.Add(11 * time.Second),
+	})
+	if !eval2.IncidentOpen || eval2.Reopened || eval2.IncidentID == eval1.IncidentID {
+		t.Fatalf("expected brand-new incident after transient workload removal, got %+v (first=%s)", eval2, eval1.IncidentID)
+	}
+}
+
+func TestDetector_ObserveDeltaAndRestoreOpenIncident(t *testing.T) {
+	det := NewDetector(Config{
+		NodeName:          "pi01",
+		HostMemTotalBytes: 2 * gib,
+	})
+
+	t0 := time.Date(2026, 11, 14, 4, 33, 26, 0, time.UTC)
+	cg := "/franken.slice/franken-chaos-workload.service"
+
+	// ObserveDelta pada state yang belum terinisialisasi wajib tetap mendeteksi POST_OOM
+	evalOOM := det.ObserveDelta(cg, MemoryEvents{Max: 1, OOM: 1, OOMKill: 1}, MemoryEvents{Max: 1, OOM: 1, OOMKill: 1}, 200*mib, t0)
+	if !evalOOM.IncidentOpen || evalOOM.Severity != SeverityPostOOM || evalOOM.IncidentID == "" {
+		t.Fatalf("expected POST_OOM open incident from ObserveDelta, got %+v", evalOOM)
+	}
+
+	// Simulate restart daemon: detektor baru menyinkronkan kembali insiden terbuka untuk target hidup
+	detAfterRestart := NewDetector(Config{
+		NodeName:          "pi01",
+		HostMemTotalBytes: 2 * gib,
+	})
+	liveCG := "/system.slice/haunted-api.service"
+	detAfterRestart.RestoreOpenIncident(liveCG, "INC-EXISTING-01", SeverityP1)
+
+	evalLive := detAfterRestart.Evaluate(Sample{
+		Cgroup:        liveCG,
+		MemoryCurrent: 180 * mib,
+		MemoryMax:     200 * mib,
+		At:            t0.Add(5 * time.Second),
+	})
+	if !evalLive.IncidentOpen || evalLive.IncidentID != "INC-EXISTING-01" || evalLive.Severity != SeverityP1 {
+		t.Fatalf("expected restored incident INC-EXISTING-01 (P1), got %+v", evalLive)
+	}
+}
