@@ -115,8 +115,8 @@ Server read-only untuk landing page dan replay incident. Semua route hanya mener
 | ----------------- | ---------------------------------------------------------------------------------------------------------- |
 | Method + Endpoint | `GET /dist/*`, `GET /assets/*`                                                                             |
 | Auth Required     | Tidak                                                                                                      |
-| Response          | `200` modul ES (`text/javascript`), CSS, dan SVG dari aset yang di-embed, `Cache-Control: public, max-age=300` |
-| Notes             | `ui/dist/index.mjs` juga menjadi `ui.entry` aplikasi Kiro Crew (default export komponen React + `mount()`) |
+| Response          | `200` modul ES (`text/javascript`), CSS, SVG, WebP, dan ICO dari aset yang di-embed, `Cache-Control: public, max-age=300` |
+| Notes             | `ui/dist/index.mjs` juga menjadi `ui.entry` aplikasi Kiro Crew (default export komponen React + `mount()`); `/assets/` menyajikan brand WebP & multi-favicon (`logo-icon.webp`, `logo-lockup.webp`, `favicon.webp`, `favicon.ico`, `favicon.svg`) serta `/favicon.ico` di root tetap `404` |
 
 | Field             | Detail                                                                                                     |
 | ----------------- | ---------------------------------------------------------------------------------------------------------- |

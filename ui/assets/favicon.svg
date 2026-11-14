@@ -1,15 +1,24 @@
+<!-- Ikon perisai vektor FrankenCrew FC berjahitan -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="FrankenCrew">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#5cffa1"/>
-      <stop offset="1" stop-color="#9b8cff"/>
+    <linearGradient id="fc-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#25c6e8"/>
+      <stop offset="0.52" stop-color="#38e58c"/>
+      <stop offset="1" stop-color="#266ef6"/>
+    </linearGradient>
+    <linearGradient id="fc-c" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38e58c"/>
+      <stop offset="1" stop-color="#19b97e"/>
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="16" fill="#0b0e15"/>
-  <rect x="1" y="1" width="62" height="62" rx="15" fill="none" stroke="url(#g)" stroke-opacity=".55" stroke-width="2"/>
-  <path d="M32 9.5c-11.6 0-19.6 7.7-19.6 18.4 0 6.4 2.9 10.9 7.4 13.6v8.2c0 2 1.6 3.6 3.6 3.6h17.2c2 0 3.6-1.6 3.6-3.6v-8.2c4.5-2.7 7.4-7.2 7.4-13.6 0-10.7-8-18.4-19.6-18.4z" fill="none" stroke="url(#g)" stroke-width="3.6" stroke-linejoin="round"/>
-  <circle cx="24.2" cy="28.5" r="4.4" fill="#5cffa1"/>
-  <circle cx="39.8" cy="28.5" r="4.4" fill="#9b8cff"/>
-  <path d="M33.6 34.5 29.4 41h5l-3.6 6" fill="none" stroke="#5cffa1" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M12.4 22h4.2M47.4 22h4.2" stroke="#ffb347" stroke-width="3" stroke-linecap="round"/>
+  <rect width="64" height="64" rx="15" fill="#091522"/>
+  <!-- Bingkai luar perisai dengan celah jahitan -->
+  <path d="M32 8 13 15.5v13.2c0 12.2 7.8 21.8 19 27.3 11.2-5.5 19-15.1 19-27.3V15.5L32 8z" fill="none" stroke="url(#fc-grad)" stroke-width="4.4" stroke-linejoin="round"/>
+  <!-- Tanda jahitan luar -->
+  <path d="M36 9.6v6M33 12.6h6M46 31.5h6M49 28.5v6M18 40l4-4M18 36l4 4" stroke="#091522" stroke-width="2.4" stroke-linecap="round"/>
+  <!-- Monogram F kiri -->
+  <path d="M19 21.5h15.5l-3.8 4.2H23.2v3.6h8.2l-3.8 4.2H19z" fill="#25c6e8"/>
+  <!-- Monogram C berjahitan tengah -->
+  <path d="M41.5 23.2H33L24 33.4c-1 1.2-1 2.9 0 4.1l7.8 8.3 11-7.4h-6.6l-4.2 3.1-4.1-4.5 7.4-8.4h6.2z" fill="url(#fc-c)"/>
+  <path d="M27.2 33.8l4 3.6M29.4 31.6l4 3.6" stroke="#091522" stroke-width="1.8" stroke-linecap="round"/>
 </svg>

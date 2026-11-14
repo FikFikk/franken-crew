@@ -1,5 +1,5 @@
-// FrankenCrew landing page: install tabs, live Sentinel badge, hero numbers, and the Graveyard mount.
-// Loaded as a module from index.html (the CSP forbids inline scripts).
+// Halaman landing FrankenCrew: tab instalasi, badge Sentinel live, angka metrik hero, dan mount Graveyard.
+// Dimuat sebagai modul ES dari index.html (CSP melarang inline script).
 
 import { mount, loadReplay, summarize } from '../dist/index.mjs';
 
@@ -190,7 +190,7 @@ async function initGraveyard() {
     fillStats(summarize(replay));
     fillTeaser(replay);
   }
-  // Without data the component renders its own empty state and explains how to generate a replay.
+  // Tanpa data eksternal, komponen merender empty state dan cara membuat dataset replay.
   mount(target, replay ? { replay, dataUrl: DATA_URL } : { dataUrl: DATA_URL });
 }
 
