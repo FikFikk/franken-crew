@@ -2,6 +2,10 @@
 
 **FrankenCrew** is a Two-Speed autonomous Linux server self-healing sentinel paired with **Kiro CLI Crew** and human-in-the-loop WhatsApp approvals.
 
+**Kiroween 2026 entry, Frankenstein category.** Live incident replays: <https://frankencrew.fikfikk.my.id>. How Kiro was used: [docs/DEVPOST_SUBMISSION.md](docs/DEVPOST_SUBMISSION.md#how-kiro-was-used).
+
+![The Graveyard replaying a heap leak: memory and PSI curves, the L1 reflex 0.78 ms after detection, the WhatsApp poll and vote, the approved reload, and the 120-second verify window](docs/media/graveyard-heap-leak.png)
+
 > **Status (Sentinel Core + Headless WhatsApp Bridge + Kiro Crew + Chaos Verification Complete)**
 >
 > - **Implemented & Tested (Go 1.26.11+, pure-Go static binary `CGO_ENABLED=0`, `govulncheck` clean):** Kernel telemetry (`kernelfs`, `psi`, `cgroup`, `journal`), EWMA Time-To-OOM `detector`, SQLite WAL `incident` store & `redact` pipeline, single-source `policy` & fixed-argv `executor`, L1 TTL `reflex` engine, Ed25519 `approval` protocol, Streamable HTTP/SSE & stdio `mcpserver` (including 120s PSI+RAM stability `verify_health` and `postmortem_generate`), unified `sentinel` daemon, headless `whatsmeow` bridge (`internal/wabridge` + `cmd/wa-bridge`), redacted markdown `postmortem` generator, systemd sandbox units (`deploy/systemd/`), 20-cycle `chaos` suite (`internal/chaos` + `chaos/`), and the `franken` CLI (`keys init`, `sentinel serve`, `mcp serve|stdio|connect`, `wa-login`, `postmortem`, `chaos run`, `guard`, `lab simulate|export|serve`).
@@ -158,7 +162,8 @@ Without `--sentinel`, `/api/status` returns `{"mode":"replay"}` and the badge sh
 - [documentation.md](documentation.md) — Entity lifecycles, state transitions, and business constraints (Bahasa Indonesia)
 - [documentation-api.md](documentation-api.md) — Sentinel HTTP, SSE, MCP tool, CLI, and Graveyard dashboard contracts (Bahasa Indonesia)
 - [docs/DEVPOST_SUBMISSION.md](docs/DEVPOST_SUBMISSION.md) — Kiroween 2026 Devpost answers, including how Kiro was used
-- [docs/BLOG_POST.md](docs/BLOG_POST.md) — Draft dev.to article for the Kiroween 2026 blog prize
+- [docs/BLOG_POST.md](docs/BLOG_POST.md) — dev.to article for the Kiroween 2026 blog prize
+- [docs/DEMO_VIDEO_SCRIPT.md](docs/DEMO_VIDEO_SCRIPT.md) — Demo video script, shot list, and upload checklist
 
 ## License
 
