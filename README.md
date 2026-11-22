@@ -42,6 +42,7 @@ Sentinel rejects any plan or execution whose target is outside the incident cgro
 
 ```text
 cmd/franken/                  # Unified CLI (`keys init`, `sentinel serve`, `mcp serve|stdio|connect`, `wa-login`, `postmortem`, `chaos run`, `guard`, `lab`)
+apps/video/                   # Remotion project for the Kiroween demo video (data generated from this repo)
 cmd/wa-bridge/                # Headless WhatsApp bridge daemon & MCP stdio binary (`serve`, `login`, `mcp`)
 chaos/                        # Linux chaos workload injector & 20-cycle test harness (`haunted_workload.sh`, `run_chaos_suite.sh`)
 deploy/systemd/               # Hardened systemd units (`franken-sentinel.service`, `franken-bridge.service`, `franken-lab.service`, `franken.env.example`)
@@ -164,7 +165,7 @@ Without `--sentinel`, `/api/status` returns `{"mode":"replay"}` and the badge sh
 - [docs/DEVPOST_SUBMISSION.md](docs/DEVPOST_SUBMISSION.md) — Kiroween 2026 Devpost answers, including how Kiro was used
 - [docs/BLOG_POST.md](docs/BLOG_POST.md) — dev.to article for the Kiroween 2026 blog prize
 - [docs/DEMO_VIDEO_SCRIPT.md](docs/DEMO_VIDEO_SCRIPT.md) — Demo video script, shot list, and upload checklist
-- [docs/REMOTION_VIDEO.md](docs/REMOTION_VIDEO.md) — Build spec for rendering the demo video with Remotion (`apps/video/`)
+- [docs/REMOTION_VIDEO.md](docs/REMOTION_VIDEO.md) — Design of the Remotion demo video in [`apps/video/`](apps/video/README.md)
 
 ## License
 

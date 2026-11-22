@@ -1,0 +1,48 @@
+{
+  "name": "frankencrew-demo-video",
+  "version": "1.0.0",
+  "description": "FrankenCrew Kiroween 2026 demo video, built with Remotion",
+  "repository": {},
+  "license": "MIT",
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24"
+  },
+  "private": true,
+  "dependencies": {
+    "@remotion/bundler": "4.0.545",
+    "@remotion/captions": "4.0.545",
+    "@remotion/cli": "4.0.545",
+    "@remotion/google-fonts": "4.0.545",
+    "@remotion/install-whisper-cpp": "4.0.545",
+    "@remotion/media": "4.0.545",
+    "@remotion/renderer": "4.0.545",
+    "mediabunny": "1.66.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.545"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.545",
+    "@types/react": "19.3.0",
+    "@types/web": "0.0.166",
+    "eslint": "10.12.0",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio",
+    "data": "node scripts/collect-data.mjs",
+    "stills": "node scripts/stills.mjs",
+    "captions": "node scripts/make-captions.mjs",
+    "srt": "node scripts/make-srt.mjs",
+    "render": "remotion render FrankenCrewDemo out/frankencrew-demo.mp4 --codec=h264 --crf=18",
+    "preview": "remotion render FrankenCrewDemo out/frankencrew-preview.mp4 --codec=h264 --crf=30 --scale=0.5",
+    "thumbnail": "node scripts/stills.mjs --thumbnail",
+    "build": "remotion bundle",
+    "upgrade": "remotion upgrade",
+    "lint": "eslint src && tsc"
+  },
+  "allowScripts": {
+    "esbuild": false
+  }
+}

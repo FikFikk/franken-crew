@@ -239,6 +239,11 @@ check the Graveyard at desktop and phone widths and inside a React host page lik
 recorded the Graveyard screen footage for the demo video. The landing page layout used the third-party `ui-ux-pro-max`
 design skill (commit `df656e3`).
 
+The demo video itself is code: a Remotion project in `apps/video/`, built in Kiro Web with a `fileMatch`
+steering file that loads only for that folder. `npm run data` regenerates every number on screen from the
+repository (the chaos suite, the property tests, a real `franken guard` run, the spec counts), and the
+animations are timed to the words of the recorded voiceover through Whisper captions.
+
 ### Where Kiro helped most, and where it needed correcting
 
 The most useful catch came from a Kiro Web audit. The first policy protected `sshd.service`, but Debian,
