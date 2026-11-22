@@ -3,20 +3,19 @@ title: "FrankenCrew: I stitched a Go kernel watchdog, a Kiro Crew, and a WhatsAp
 published: false
 description: "Splitting a self-healing Linux sentry into reflexes, agents, and a human conscience, built with Kiro for Kiroween 2026."
 tags: kiro, go, linux, devops
-# cover_image: dev.to needs a PNG or JPG URL; export ui/assets/hero-dark.svg (1200x675) and paste its URL here.
+cover_image: https://raw.githubusercontent.com/FikFikk/franken-crew/main/docs/media/cover.png
 ---
 
 <!--
-Draft for the Kiroween 2026 Bonus Blog Prize. Before publishing:
-1. Replace every [bracketed] note with your own words. Judges read for the builder's voice.
-2. Add the demo video and a Graveyard GIF where marked.
-3. Keep the hackathon disclosure line below.
+Ready for the Kiroween 2026 Bonus Blog Prize. Before publishing on dev.to:
+1. Merge the pull request that adds docs/media/, so the raw.githubusercontent.com image links resolve.
+2. Replace VIDEO_ID in the YouTube embed below with the ID of the public demo video, or delete that line.
+3. Read it once and change anything that does not sound like you. Keep the hackathon disclosure line.
+4. Set published: true (or press Publish in the dev.to editor) before December 4, 2026, 2:00 pm PT.
 -->
 
 *I wrote this post as part of the Kiroween 2026 hackathon, where FrankenCrew is my entry in the Frankenstein
 category.*
-
-[Open with your own 3 a.m. story: the server, the service that leaked, what it cost you.]
 
 Small Linux servers die in a predictable way. One process leaks memory, the kernel spends more and more time
 reclaiming pages, every request slows down, and finally the OOM killer picks a victim. On a company fleet an
@@ -48,7 +47,9 @@ kernel signals -> Sentinel (Go)      -> L1 reflex: milliseconds, reversible, TTL
 - **Thinking** belongs to agents. A Kiro Crew of four agents triages the incident and writes a plan.
 - **Anything irreversible** belongs to a human. Restarts and reloads wait for a vote in a WhatsApp poll.
 
-[GIF: the Graveyard replaying the heap leak incident.]
+![The Graveyard replaying the heap leak incident: memory and PSI curves, the L1 reflex 0.78 ms after detection, the poll, the vote, the restart, and the 120-second verify window](https://raw.githubusercontent.com/FikFikk/franken-crew/main/docs/media/graveyard-heap-leak.png)
+
+{% youtube VIDEO_ID %}
 
 ## Speed 1: reflexes in plain Go
 
@@ -148,11 +149,15 @@ already used. The incident still resolves, through a plan that restarts only the
 The lesson I took from this: treat the model as untrusted input, and put the answer to "what if the agent is
 wrong?" in code that the agent cannot talk its way past.
 
-[Screenshot: the event log of the prompt injection incident with the three blocked actions.]
+![Sentinel lane of the prompt injection replay: the plan rejected by policy, the blocked ssh.service restart, and the replayed step token rejected](https://raw.githubusercontent.com/FikFikk/franken-crew/main/docs/media/prompt-injection-blocked.png)
 
 ## How Kiro built it
 
-[Say how you split the work between yourself and Kiro, in your own words.]
+Three Kiro surfaces did three jobs. Day one happened on my own machine: the spec, the Sentinel core, the MCP
+server, and wa-bridge, with hooks re-running tests as files changed. The audit and hardening rounds ran in Kiro
+Web, which worked in a sandbox and ended each round with a pull request I reviewed and merged (the 24 commits
+in PRs #1 and #2 are authored by the Kiro agent). Kiro Crew is the runtime: it hosts the four agents, the crons, and the
+Graveyard page.
 
 **A spec before code.** The project began as a Kiro spec in `.kiro/specs/server-incident-remediation/`:
 twelve requirements written in EARS form ("WHEN severity is P1 or P2 ... THE SYSTEM SHALL apply at most one
@@ -173,13 +178,19 @@ the same guard the agents meet in production. File-save hooks re-run the executo
 and redaction tests for the package I touched, and a `Stop` hook runs `go vet` and the whole suite at the end
 of every turn.
 
-**Parallel agents for the hardening rounds.** Later rounds ran in Kiro Web. The agent audited the repository
-against the hackathon rules, then split independent fixes across sub-agents in separate git worktrees: the
+**Parallel agents for the hardening rounds.** In Kiro Web the agent audited the repository against the
+hackathon rules, then split independent fixes across sub-agents in separate git worktrees: the
 time-aware EWMA, the inotify re-arm for recreated cgroups, and the replay backend. I reviewed each branch and
 cherry-picked the results. The Playwright power took the screenshots that checked the dashboard at desktop and
 phone widths.
 
-[One moment where Kiro surprised you, and one where you had to correct it.]
+The catch I am most glad about came from one of those audits. My first policy protected `sshd.service`, but
+Debian, Ubuntu, and Raspberry Pi OS name the unit `ssh.service`. On exactly the boards I built this for, an
+agent plan could have restarted SSH. The fix added the distro names and the network units, with tests.
+
+Kiro also needed correcting. An early `app.json` description promised "Go/eBPF kernel reflexes", and the code
+has never used eBPF. Generated prose overclaims as easily as generated code breaks, so I now review
+descriptions and docs with the same suspicion as a diff.
 
 ## Walking through the Graveyard
 
@@ -230,7 +241,9 @@ Then open http://127.0.0.1:3008. To run it as a Kiro Crew app, install the folde
 FrankenCrew still has to prove itself on real hardware: resident memory against the 32 MiB target, and the
 latency from a kernel signal to an applied reflex. After that, CPU and IO pressure can use the same pipeline.
 
-[Close in your own voice: what you would tell someone who runs a small server, and a thank-you if you want one.]
+If you run a small server, the part worth stealing is the split, more than FrankenCrew itself. Let
+deterministic code do the fast, reversible things, let agents read and plan, and make every irreversible step
+wait for a person. Then write down what must never happen and turn each item into a test.
 
 *Source code: [github.com/FikFikk/franken-crew](https://github.com/FikFikk/franken-crew) (MIT). Built for
 Kiroween 2026.*

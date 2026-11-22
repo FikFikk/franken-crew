@@ -1,8 +1,9 @@
-# FrankenCrew: Devpost submission draft (Kiroween 2026)
+# FrankenCrew: Devpost submission (Kiroween 2026)
 
-This file holds draft answers for the Devpost form. Copy each section into the matching field. Text in
-`[brackets]` needs your input before you submit: links that do not exist yet, and anything only you can say.
-Each technical claim points to a file in this repository so judges can check it.
+This file holds the answers for the Devpost form. Copy each section into the matching field. Each technical
+claim points to a file in this repository so judges can check it. What is still open: the three links marked
+**TODO** in the table, which exist only after you publish the video, the blog post, and the social post, and
+the unchecked boxes in the checklist.
 
 ## Quick facts
 
@@ -11,12 +12,51 @@ Each technical claim points to a file in this repository so judges can check it.
 | Project name | FrankenCrew |
 | Tagline | Kernel reflexes in Go, a Kiro Crew of agents, and a WhatsApp poll that keeps a human in charge of small Linux servers. |
 | Category | Frankenstein |
-| Bonus prizes | [Confirm the exact prize names on the form: Best Kiro Crew App, Best Demo, Blog, Social Blitz] |
+| Bonus prizes to select | Best Kiro Crew App, Bonus Blog Prize, Social Blitz. Best Demo is judged from the Presentation score among the top 10% overall; select it too if the form lists it. |
 | Live demo | https://frankencrew.fikfikk.my.id (incident replays from `franken lab simulate`, labelled as simulation) |
 | Repository | https://github.com/FikFikk/franken-crew (MIT) |
-| Demo video | [YouTube or Vimeo URL; check the length limit in the rules] |
-| Blog post | [dev.to URL once `docs/BLOG_POST.md` is published] |
-| Social post | [URL of the post that starts with `#KiroweenHackathon26`] |
+| Kiro Crew app repository | https://github.com/FikFikk/franken-crew (`app.json` at the root, agents in `.kiro/agents/`) |
+| Demo video | **TODO:** public YouTube URL, under 3 minutes. Script and shot list: `docs/DEMO_VIDEO_SCRIPT.md` |
+| Blog post | **TODO:** dev.to URL once `docs/BLOG_POST.md` is published |
+| Social post | **TODO:** URL of the post that starts with `#KiroweenHackathon26` |
+| Gallery images | `docs/media/cover.png`, `docs/media/graveyard-heap-leak.png`, `docs/media/prompt-injection-blocked.png`, `docs/media/prompt-injection-phone-recorder.png` |
+
+## Submission checklist
+
+Deadline: **December 4, 2026, 2:00 pm Pacific Time** (December 5, 05:00 WIB). Devpost locks the entry after
+that, so save a draft early and update it.
+
+Required by the [official rules](https://kiroween.devpost.com/rules):
+
+- [x] Public GitHub repository with an open source license that GitHub detects (MIT).
+- [x] `/.kiro` at the repository root with specs, hooks, steering, agents, and skills, and not in `.gitignore`.
+- [x] A working URL for judges: the live Graveyard, plus the no-root testing instructions below.
+- [x] Built during the Submission Period: the first commit (the license) is from November 12, 2026, and the
+      spec, steering, and blueprint followed two minutes later. Third-party libraries are listed in `go.mod`.
+      If any code was written before October 30, disclose it on the form.
+- [x] A text description and a write-up of how Kiro was used (the sections below).
+- [ ] Demo video under 3 minutes, **public on YouTube** (the rules name YouTube only), with footage of the
+      project running and no copyrighted music.
+- [ ] Category and bonus prizes selected on the form.
+
+Bonus prizes:
+
+- [ ] Best Kiro Crew App: paste the repository URL and the "Kiro Crew" section below into the Crew app fields.
+      The prize table says the GitHub account must match the main submission; it does.
+- [ ] Bonus Blog Prize: publish `docs/BLOG_POST.md` on dev.to before the deadline. It already states that it
+      was written for Kiroween 2026.
+- [ ] Social Blitz: publish one post that starts with `#KiroweenHackathon26` (drafts at the end of this file).
+- [ ] Best Student Project or Best Ghost of Kiroween Past: only if they apply to you. Student needs LinkedIn,
+      student email, year, degree, and school. Ghost needs a Kiroween 2025 registration.
+
+Before you press submit, set the GitHub About panel by hand (the sandbox token cannot edit repository
+settings):
+
+- Description: `Kernel reflexes in Go, a Kiro Crew of AI agents, and a WhatsApp approval poll that keep small
+  Linux servers alive. Kiroween 2026 entry (Frankenstein).`
+- Website: `https://frankencrew.fikfikk.my.id`
+- Topics: `kiroween`, `kiro`, `kiro-crew`, `golang`, `linux`, `cgroups`, `psi`, `mcp`, `whatsapp`,
+  `self-healing`, `sre`, `hackathon`
 
 ## Inspiration
 
@@ -30,7 +70,10 @@ plan. They are a bad fit for the part that has to happen in milliseconds, and no
 creature: a deterministic Go daemon for the reflexes, a Kiro Crew of agents for the thinking, and a WhatsApp
 poll as the conscience. That is the Frankenstein theme taken literally.
 
-[Add one or two sentences of your own: the server or the night that made you build this.]
+The defaults in this repository show who it is for: a Raspberry Pi OS, Debian, or Ubuntu box reached over
+Tailscale, with a WhatsApp group as the only pager. The Sentinel binds only to Tailscale, loopback, or private
+addresses, and the policy protects `ssh.service`, `tailscaled`, and the network units, because restarting any
+of them can cut the owner off from the machine.
 
 ## What it does
 
@@ -100,7 +143,12 @@ The design lists four correctness properties, and each one became a property-bas
 Two more properties came out of later work: `TestProperty_VoteToTokenExactBinding` (a vote mints a token for
 exactly the option voted on) and `TestDetector_Property_StaleSamplesNeverChangeInOrderEvaluations`.
 
-[Your own words: what writing the spec first changed compared with prompting feature by feature.]
+Writing the spec first changed the order of the work. The first commit after the license holds only the
+spec, the project rules, and the blueprint, with no Go code. The implementation commits then follow the
+twelve task groups in `tasks.md` from the kernel access layer to hardening, and all 52 tasks are checked off.
+Compared with prompting feature by feature, every later prompt could point at a requirement number, and every
+fix had a number to test against (250 ms, 25% of `memory.current`, a 120-second verify window) instead of an
+opinion about what "fast enough" means.
 
 ### Steering
 
@@ -166,15 +214,42 @@ and the Graveyard as a dashboard page (`ui.pages`, route `/apps/franken-crew`).
   component that uses the host's React from the Crew import map and mounts the framework-free replay into a
   shadow root. It also exports `mount()` for other hosts, so the same files serve the landing page.
 
-### Kiro Web, sub-agents, and powers
+### Three Kiro surfaces, three jobs
 
-Later hardening rounds ran in Kiro Web. The agent audited the repository against the rules, opened pull
-requests through the GitHub CLI power, and split independent fixes across sub-agents working in separate git
-worktrees: the time-aware EWMA fix, the inotify re-arm, and the replay backend were built in parallel and
-cherry-picked after review. The Playwright power took the screenshots used to check the Graveyard at desktop
-and phone widths and inside a React host page like the Crew dashboard.
+The git history shows how the work moved between Kiro surfaces:
 
-[Your own words: the most useful thing Kiro did, and one place where you had to steer it back.]
+| Surface | What it did here | Evidence |
+|---|---|---|
+| Kiro on my machine | Day one: the spec, the Sentinel core, the MCP server, wa-bridge, and the first Crew automation. File-save hooks re-ran the tests of the package being edited, and the `Stop` hook ran the whole suite. Later, the landing page redesign and fixes to bridge pairing and the reflex engine. | 21 commits authored by `FikFikk` |
+| Kiro Web | Audit and hardening rounds in a sandbox. Each round ended in a pull request that I reviewed and merged. | 24 commits authored by `Kiro Agent` in PRs #1 and #2, plus this submission kit |
+| Kiro Crew | The runtime. It hosts the four agents, the two crons, the webhook phases, and the Graveyard page. | `app.json`, `.kiro/agents/` |
+
+The difference that mattered: locally I steered turn by turn and the hooks gave fast feedback. Kiro Web worked
+best on a goal with a clear finish line, such as "audit the repository against the rules and fix what fails",
+because it could run the full suite, split the work, and come back with a pull request.
+
+### Sub-agents and powers
+
+In Kiro Web the agent split independent fixes across sub-agents working in separate git worktrees: the
+time-aware EWMA fix, the inotify re-arm, and the replay backend were built in parallel and cherry-picked
+after review. The GitHub CLI power opened the pull requests. The Playwright power took the screenshots used to
+check the Graveyard at desktop and phone widths and inside a React host page like the Crew dashboard, and it
+recorded the Graveyard screen footage for the demo video. The landing page layout used the third-party `ui-ux-pro-max`
+design skill (commit `df656e3`).
+
+### Where Kiro helped most, and where it needed correcting
+
+The most useful catch came from a Kiro Web audit. The first policy protected `sshd.service`, but Debian,
+Ubuntu, and Raspberry Pi OS name the unit `ssh.service`, so on exactly the boards this project targets an
+agent plan could have restarted SSH. Commit `677b647` added the distro names and the network units, and
+`internal/policy/hardening_test.go` now checks them.
+
+Kiro also needed correcting. The first `app.json` description claimed "Go/eBPF kernel reflexes", but the
+code has never used eBPF; it reads PSI, cgroup v2 files, and inotify events. The audit removed the claim in
+commit `e1441b0`. The first Crew flow also stalled after triage, because nothing woke the next agent. PR #1
+replaced it with the webhook-driven conductor, and `deploy/crew_orchestration_test.go` fails if any agent
+other than the conductor gets spawn rights. The lesson I kept: review generated text, such as descriptions,
+docs, and claims, as carefully as generated code.
 
 ## Challenges we ran into
 
@@ -216,12 +291,13 @@ and phone widths and inside a React host page like the Crew dashboard.
   the answer has to live in code: policy, scope checks, and signed tokens.
 - Specs and properties scale better than prompts. Once P1 to P4 existed as tests, refactors of the approval
   and reflex code had a safety net that example tests alone did not give.
-- [One lesson of your own.]
+- Label the data honestly. The Graveyard marks simulated incidents, inferred Crew steps, and in-process
+  latency, so anyone reading a replay can tell a measurement from a reconstruction.
 
 ## What's next for FrankenCrew
 
-- Run it on real hardware ([board and kernel version]), measure the resident memory against the 32 MiB target
-  and the kernel-to-reflex latency, and publish recorded replays with `franken lab export`.
+- Publish recorded incidents from a real board with `franken lab export`, next to the simulated ones, and
+  document how the resident memory and the kernel-to-reflex latency were measured.
 - Cover CPU and IO pressure with the same reflex and plan pipeline.
 - Let the morning digest suggest permanent fixes, such as memory limits and alert thresholds, as pull requests.
 
@@ -263,21 +339,46 @@ and crons need `FRANKEN_BEARER_TOKEN`, a running Sentinel, and a paired wa-bridg
   conductor protocol. The Sentinel does not log them.
 - Reflex latency in the replays is in-process Go and SQLite time from the triggering sample to the applied
   reflex, not kernel-to-reflex latency on hardware.
-- [Once you record real incidents, export them with `franken lab export --db franken-sentinel.db --out
-  replay.json --source-kind recording` and the UI labels them **Recording**.]
+- Real incidents exported with `franken lab export --db franken-sentinel.db --out replay.json --source-kind
+  recording` are labelled **Recording**. The live demo has none yet.
 
 ## Social Blitz drafts
 
-Each post must start with `#KiroweenHackathon26`. Attach a Graveyard screen recording or the hero image.
+The rules ask for a post that **starts with** `#KiroweenHackathon26`, shares your favourite thing about Kiro,
+and says how it changed the way you approached development. The Kiro team scores original thoughts over AI
+writing, real insights, and the quality of the attached image or video. Treat these drafts as notes: rewrite
+them in your own words before you post. Kiro's handles are `@kirodotdev` on X and
+[kirodotdev](https://www.linkedin.com/showcase/kirodotdev) on LinkedIn.
 
-1. `#KiroweenHackathon26` I stitched a Go kernel watchdog, a Kiro Crew of AI agents, and a WhatsApp poll into
-   one monster. The Sentinel applies a reversible reflex first, the agents plan the fix, and nothing risky runs
-   until I vote. Replays: https://frankencrew.fikfikk.my.id
-2. `#KiroweenHackathon26` My favourite FrankenCrew replay: hidden instructions in a log ask the agents to
-   restart ssh.service. The policy engine rejects the plan and the Sentinel refuses a replayed approval token.
-   [link]
-3. `#KiroweenHackathon26` Built with @kirodotdev: an EARS spec, four correctness properties turned into rapid
-   property tests, steering that loads kernel rules only for kernel code, and hooks that guard the agents' MCP
-   calls. [repo link]
+Attach `docs/media/prompt-injection-blocked.png` or a 20 to 30 second clip of the Graveyard footage (see
+`docs/DEMO_VIDEO_SCRIPT.md`).
 
-[Check the official Kiro handle for each platform before posting.]
+**X (278 characters with the link):**
+
+```text
+#KiroweenHackathon26 My favourite thing about @kirodotdev: specs that become tests. My spec lists 4 things FrankenCrew must never do, like run plan Y on a vote for plan X. Each became a property test. Now I start features by asking what must never happen. https://frankencrew.fikfikk.my.id
+```
+
+**LinkedIn:**
+
+```text
+#KiroweenHackathon26 My favourite thing about Kiro is that the spec does not stay a document.
+
+For FrankenCrew, my Kiroween entry, I started with requirements and a design before any Go code. The design
+lists four things the system must never do: validate a plan with a forbidden action, let an approval for plan X
+run plan Y, roll a reflex back twice, or throttle a service below the memory it already uses. Each one became
+a property-based test that runs on every turn through a Kiro hook.
+
+That changed how I build. I used to start with "what should this feature do?" Now I start with "what must
+never happen?", because that question becomes a test.
+
+It paid off when a Kiro Web audit found that my policy protected sshd.service, while Debian, Ubuntu, and
+Raspberry Pi OS call it ssh.service. On the exact boards I target, an agent plan could have restarted SSH.
+
+FrankenCrew: a Go kernel watchdog, a Kiro Crew of four agents, and a WhatsApp poll that keeps a human in
+charge of small Linux servers.
+
+Replays: https://frankencrew.fikfikk.my.id
+Code: https://github.com/FikFikk/franken-crew
+@kirodotdev
+```
