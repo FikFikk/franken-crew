@@ -3,6 +3,9 @@
 Target length: **2:50**. The rules say judges do not have to watch past 3:00, so the last frame with the URL
 must land before that.
 
+To build this video in code with Remotion, follow [REMOTION_VIDEO.md](REMOTION_VIDEO.md). It uses the shot
+list and narration below as its script.
+
 ## What the rules require
 
 From the [Kiroween 2026 official rules](https://kiroween.devpost.com/rules):
@@ -24,9 +27,8 @@ order.
 
 ### Already recorded
 
-`graveyard-replay-broll.webm` (1280x720, 89 seconds, no audio) is in the session workspace under
-`.kiro/artifacts/screenshots/`. It was recorded with the Playwright power from the live site and contains, in
-order (times are approximate):
+`docs/media/graveyard-replay-broll.webm` (1280x720, 89 seconds, no audio) was recorded with the Playwright
+power from the live site and contains, in order (times are approximate):
 
 | From | To | What is on screen |
 |---|---|---|
@@ -49,8 +51,9 @@ YouTube accepts `.webm` directly, and any editor (CapCut, DaVinci Resolve, Clipc
    go run ./cmd/franken chaos run --runs 20 | tail -6
    ```
 
-   Both were run on this branch: the four P1 to P4 property tests pass, and the chaos suite prints
-   `Summary: passed=20/20 failed=0 max_reflex_ms=1.52 avg_reflex_ms=1.15`.
+   Both were run on this branch: the four P1 to P4 property tests pass, and the chaos suite ends with a line
+   like `Summary: passed=20/20 failed=0 max_reflex_ms=1.61 avg_reflex_ms=1.11`. The timings change a little
+   on every run.
 
 2. **GitHub in the browser:** the repository root with `.kiro/` visible, then
    `.kiro/specs/server-incident-remediation/requirements.md` (scroll to Requirement 3.1), then

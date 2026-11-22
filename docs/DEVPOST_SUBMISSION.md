@@ -152,7 +152,7 @@ opinion about what "fast enough" means.
 
 ### Steering
 
-Six steering files in `.kiro/steering/` load in three different ways:
+Seven steering files in `.kiro/steering/` load in three different ways:
 
 - `product.md`, `tech.md`, `structure.md`, and `rules.md` load on every turn. They hold the product scope, the
   toolchain and security gate (Go 1.26.11, `govulncheck`), the package map, and project rules such as Go
@@ -160,6 +160,8 @@ Six steering files in `.kiro/steering/` load in three different ways:
 - `linux-kernel.md` uses `fileMatch` on `internal/{psi,cgroup,kernelfs}/**`. Its kernel guardrails load only
   while Kiro edits those packages. One example: reclaim must stay per-cgroup, at most 25% of `memory.current`,
   and never touch `drop_caches`.
+- `remotion.md` uses `fileMatch` on `apps/video/**` and pulls in the video spec with
+  `#[[file:docs/REMOTION_VIDEO.md]]`, so the Remotion rules load only while Kiro builds the demo video.
 - `incident-response.md` is manual. It is the runbook, pulled in only when we work on incident flows.
 
 Keeping the kernel rules out of unrelated turns kept the context small, and the rules still applied every
@@ -186,7 +188,7 @@ MCP is the trust boundary of the whole design. The agents never get a shell on t
 servers, and each agent's JSON file lists only the tools its role needs. Only `franken-architect` can call
 `plan_submit`, and only `franken-remediator` can call `action_execute`:
 
-- `franken-sentinel` exposes 17 tools over Streamable HTTP with bearer auth, from read-only ones such as
+- `franken-sentinel` exposes 15 tools over Streamable HTTP with bearer auth, from read-only ones such as
   `node_snapshot`, `psi_history`, `cgroup_top`, and `journal_tail` to gated ones such as `plan_submit`,
   `action_execute`, and `verify_health`. `franken mcp connect` bridges it to stdio for Kiro.
 - `franken-wa` exposes 4 tools from wa-bridge: `wa_notify`, `wa_request_approval`, `wa_await_decision`, and

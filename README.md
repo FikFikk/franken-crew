@@ -66,7 +66,7 @@ internal/
 ui/                           # Graveyard landing page, no-build ES modules (`dist/`, Kiro Crew `ui.entry`) & `data/replay.json`
 policy/                       # `actions.yaml` catalog & `plan.schema.json`
 .kiro/
-  steering/                   # `rules.md`, `product.md`, `tech.md`, `structure.md`, `linux-kernel.md`, `incident-response.md`
+  steering/                   # `rules.md`, `product.md`, `tech.md`, `structure.md`, `linux-kernel.md`, `incident-response.md`, `remotion.md`
   specs/                      # Requirements, design, and task breakdown (`server-incident-remediation`)
   hooks/                      # Kiro v1 hooks (`policy-sync`, `executor-guard`, `redaction-test`, `preToolUse`, `spec-verify-on-stop`)
   agents/                     # `franken-conductor.json`, `franken-sentry.json`, `franken-architect.json`, `franken-remediator.json`
@@ -164,6 +164,7 @@ Without `--sentinel`, `/api/status` returns `{"mode":"replay"}` and the badge sh
 - [docs/DEVPOST_SUBMISSION.md](docs/DEVPOST_SUBMISSION.md) — Kiroween 2026 Devpost answers, including how Kiro was used
 - [docs/BLOG_POST.md](docs/BLOG_POST.md) — dev.to article for the Kiroween 2026 blog prize
 - [docs/DEMO_VIDEO_SCRIPT.md](docs/DEMO_VIDEO_SCRIPT.md) — Demo video script, shot list, and upload checklist
+- [docs/REMOTION_VIDEO.md](docs/REMOTION_VIDEO.md) — Build spec for rendering the demo video with Remotion (`apps/video/`)
 
 ## License
 

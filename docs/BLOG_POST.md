@@ -99,7 +99,7 @@ My first version stalled after triage, because nothing told the next agent to st
 phases fixed that, and an `incident-sweep` cron every 15 minutes catches anything a missed webhook leaves
 behind.
 
-The agents never get a shell. They reach the server only through two MCP servers: `franken-sentinel` with 17
+The agents never get a shell. They reach the server only through two MCP servers: `franken-sentinel` with 15
 tools and `franken-wa` with 4, and each agent's file lists only the tools its role needs. Every write goes
 through `plan_submit` and `action_execute`, which means every action an agent attempts passes the policy
 engine and the token check.
