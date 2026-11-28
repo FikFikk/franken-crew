@@ -1,0 +1,226 @@
+[
+  {
+    "text": " The",
+    "startMs": 50,
+    "endMs": 240,
+    "timestampMs": 145,
+    "confidence": 0.477913
+  },
+  {
+    "text": " whole",
+    "startMs": 240,
+    "endMs": 630,
+    "timestampMs": 435,
+    "confidence": 0.998639
+  },
+  {
+    "text": " thing",
+    "startMs": 630,
+    "endMs": 1020,
+    "timestampMs": 825,
+    "confidence": 0.997234
+  },
+  {
+    "text": " installs",
+    "startMs": 1020,
+    "endMs": 1650,
+    "timestampMs": 1335,
+    "confidence": 0.998723
+  },
+  {
+    "text": " as",
+    "startMs": 1650,
+    "endMs": 1810,
+    "timestampMs": 1730,
+    "confidence": 0.988346
+  },
+  {
+    "text": " a",
+    "startMs": 1810,
+    "endMs": 1910,
+    "timestampMs": 1860,
+    "confidence": 0.991168
+  },
+  {
+    "text": " Kiro",
+    "startMs": 1910,
+    "endMs": 2200,
+    "timestampMs": 2055,
+    "confidence": 0.448625
+  },
+  {
+    "text": " Crew",
+    "startMs": 2200,
+    "endMs": 2800,
+    "timestampMs": 2500,
+    "confidence": 0.187017
+  },
+  {
+    "text": " app:",
+    "startMs": 2800,
+    "endMs": 2800,
+    "timestampMs": 2800,
+    "confidence": 0.912202
+  },
+  {
+    "text": " four",
+    "startMs": 2800,
+    "endMs": 3160,
+    "timestampMs": 2980,
+    "confidence": 0.944155
+  },
+  {
+    "text": " agents,",
+    "startMs": 3160,
+    "endMs": 3910,
+    "timestampMs": 3535,
+    "confidence": 0.844014
+  },
+  {
+    "text": " two",
+    "startMs": 3910,
+    "endMs": 4210,
+    "timestampMs": 4060,
+    "confidence": 0.971178
+  },
+  {
+    "text": " crons,",
+    "startMs": 4210,
+    "endMs": 4960,
+    "timestampMs": 4585,
+    "confidence": 0.602191
+  },
+  {
+    "text": " two",
+    "startMs": 4960,
+    "endMs": 5280,
+    "timestampMs": 5120,
+    "confidence": 0.94869
+  },
+  {
+    "text": " MCP",
+    "startMs": 5280,
+    "endMs": 5640,
+    "timestampMs": 5460,
+    "confidence": 0.981472
+  },
+  {
+    "text": " servers,",
+    "startMs": 5640,
+    "endMs": 6520,
+    "timestampMs": 6080,
+    "confidence": 0.992735
+  },
+  {
+    "text": " and",
+    "startMs": 6520,
+    "endMs": 6740,
+    "timestampMs": 6630,
+    "confidence": 0.999531
+  },
+  {
+    "text": " this",
+    "startMs": 6740,
+    "endMs": 7060,
+    "timestampMs": 6900,
+    "confidence": 0.999153
+  },
+  {
+    "text": " Graveyard",
+    "startMs": 7060,
+    "endMs": 7700,
+    "timestampMs": 7380,
+    "confidence": 0.981659
+  },
+  {
+    "text": " as",
+    "startMs": 7700,
+    "endMs": 7860,
+    "timestampMs": 7780,
+    "confidence": 0.985225
+  },
+  {
+    "text": " a",
+    "startMs": 7860,
+    "endMs": 7930,
+    "timestampMs": 7895,
+    "confidence": 0.998178
+  },
+  {
+    "text": " dashboard",
+    "startMs": 7930,
+    "endMs": 8610,
+    "timestampMs": 8270,
+    "confidence": 0.976261
+  },
+  {
+    "text": " page.",
+    "startMs": 8610,
+    "endMs": 9160,
+    "timestampMs": 8885,
+    "confidence": 0.999683
+  },
+  {
+    "text": " Twenty",
+    "startMs": 9160,
+    "endMs": 9600,
+    "timestampMs": 9380,
+    "confidence": null
+  },
+  {
+    "text": " chaos",
+    "startMs": 9600,
+    "endMs": 9970,
+    "timestampMs": 9785,
+    "confidence": 0.824477
+  },
+  {
+    "text": " runs",
+    "startMs": 9970,
+    "endMs": 10260,
+    "timestampMs": 10115,
+    "confidence": 0.996744
+  },
+  {
+    "text": " across",
+    "startMs": 10260,
+    "endMs": 10700,
+    "timestampMs": 10480,
+    "confidence": 0.997965
+  },
+  {
+    "text": " five",
+    "startMs": 10700,
+    "endMs": 11030,
+    "timestampMs": 10865,
+    "confidence": 0.97969
+  },
+  {
+    "text": " failure",
+    "startMs": 11030,
+    "endMs": 11500,
+    "timestampMs": 11265,
+    "confidence": 0.993983
+  },
+  {
+    "text": " types:",
+    "startMs": 11500,
+    "endMs": 12100,
+    "timestampMs": 11800,
+    "confidence": 0.998117
+  },
+  {
+    "text": " twenty",
+    "startMs": 12100,
+    "endMs": 12500,
+    "timestampMs": 12300,
+    "confidence": null
+  },
+  {
+    "text": " passes.",
+    "startMs": 12500,
+    "endMs": 13140,
+    "timestampMs": 12820,
+    "confidence": 0.996664
+  }
+]

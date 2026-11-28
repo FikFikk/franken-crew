@@ -124,14 +124,28 @@ Budgets add up to 5100 frames. Lengths grow with the recorded voiceover.
 
 ## 6. Voiceover and captions
 
-Record one take per scene, mono WAV, to `public/vo/01-hook.wav` … `07-outro.wav`, normalized to about
--16 LUFS. Your own voice is recommended: judges score whether the pitch is clear and memorable.
+The voiceover is one mono WAV per scene in `public/vo/01-hook.wav` … `07-outro.wav`.
+
+**Committed voiceover: synthesized.** `npm run vo` (`scripts/make-vo.mjs`) reads the narration from
+`src/data/repo.ts` and synthesizes it locally with [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)
+(Apache-2.0 weights) through `kokoro-js`, voice `af_heart`, speed 0.95, one sentence per call with 350 ms
+between sentences. A small pronunciation list changes only what is spoken: the espeak phonemizer reads "Kiro"
+as "KY-roh" and "nonce" as "non-see", so the script sends "Keyro" and "nonss", and "OOM" as letters. Each file
+is set to the same RMS and limited, so the final MP4 measures about -16 LUFS with a true peak near -1.6 dBTP.
+`kokoro-js` is not in `package.json` (about 350 MB, and `onnxruntime-node` tries to download CUDA binaries on
+Linux); install it with `ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm install --no-save kokoro-js@1.2.1`.
+
+**Your own voice** works the same way: record one take per scene to the same file names, at about -16 LUFS.
+Judges score whether the pitch is clear and memorable, and a builder's voice helps with both.
 
 `npm run captions` installs Whisper.cpp 1.5.5 into `.whisper/` (compiled from source on macOS and Linux, a
-prebuilt binary on Windows), downloads `medium.en` (about 1.5 GB; set `WHISPER_MODEL=small.en` for less),
-converts each file to 16 kHz with Remotion's bundled ffmpeg, and writes `public/captions/*.json` in Remotion's
-`Caption` format. A small fix list corrects common spellings (PSI, cgroup, Ed25519, OOM, Kiro, FrankenCrew).
-Check the JSON and fix misheard words by hand; keep the times.
+prebuilt binary on Windows), downloads `medium.en` (about 1.5 GB; set `WHISPER_MODEL=small.en` for less), and
+converts each file to 16 kHz with Remotion's bundled ffmpeg. Whisper's words are then aligned to the narration
+(longest common subsequence on normalized words): matched words keep Whisper's timing, and unmatched stretches
+share the time Whisper heard them in. The captions therefore use the script's spelling ("ssh.service",
+"cgroup", "FrankenCrew", "twenty") while following the voice. The script prints each word Whisper heard
+differently, which doubles as a pronunciation check; with the Kokoro voice, 365 of 386 words matched as
+written. `--no-snap` keeps Whisper's own text for a voiceover that leaves the script.
 
 `src/components/Captions.tsx` shows the captions as pages of about 1.4 s, centered 64 px above the bottom,
 with the current word highlighted. `npm run srt` bundles the project, reads the resolved scenes through
@@ -152,11 +166,11 @@ Then follow the upload checklist in [DEMO_VIDEO_SCRIPT.md](DEMO_VIDEO_SCRIPT.md)
 
 ## 8. How it was verified
 
-In a Kiro Web session the project was built, then rendered end to end with a robot test voice (meSpeak, not
-committed) to exercise the full path: the voiceover stretched S2, S5, and S7, Whisper `base.en` produced
-captions for all seven files, most cues resolved from the captions, and the complete video rendered at half
-size in about 100 seconds. The test voice and captions were deleted afterwards, so the committed project
-renders silently until the real voiceover is recorded.
+The submitted render was produced in Kiro Web with `npm run data`, `npm run vo`, `npm run captions`, and
+`npm run render`: 5125 frames (2:50.8), 1920x1080 at 30 fps, H.264 with AAC audio, 21.4 MB, rendered in about
+two minutes. Every cue resolved from the captions (none estimated), and frames pulled from the MP4 at each
+scene's key cue show the matching visual and caption. `npm run srt` wrote 61 subtitle cues, and the audio
+measures -16.2 LUFS integrated with a -1.6 dBTP true peak.
 
 ## 9. Kiro features this exercises
 

@@ -1,0 +1,317 @@
+[
+  {
+    "text": " FrankenCrew",
+    "startMs": 110,
+    "endMs": 780,
+    "timestampMs": 445,
+    "confidence": null
+  },
+  {
+    "text": " stitches",
+    "startMs": 780,
+    "endMs": 1310,
+    "timestampMs": 1045,
+    "confidence": 0.876624
+  },
+  {
+    "text": " together",
+    "startMs": 1310,
+    "endMs": 1960,
+    "timestampMs": 1635,
+    "confidence": 0.986852
+  },
+  {
+    "text": " three",
+    "startMs": 1960,
+    "endMs": 2270,
+    "timestampMs": 2115,
+    "confidence": 0.929303
+  },
+  {
+    "text": " parts",
+    "startMs": 2270,
+    "endMs": 2680,
+    "timestampMs": 2475,
+    "confidence": 0.995137
+  },
+  {
+    "text": " that",
+    "startMs": 2680,
+    "endMs": 2930,
+    "timestampMs": 2805,
+    "confidence": 0.999828
+  },
+  {
+    "text": " were",
+    "startMs": 2930,
+    "endMs": 3180,
+    "timestampMs": 3055,
+    "confidence": 0.98913
+  },
+  {
+    "text": " never",
+    "startMs": 3180,
+    "endMs": 3480,
+    "timestampMs": 3330,
+    "confidence": 0.999424
+  },
+  {
+    "text": " meant",
+    "startMs": 3480,
+    "endMs": 3840,
+    "timestampMs": 3660,
+    "confidence": 0.99843
+  },
+  {
+    "text": " to",
+    "startMs": 3840,
+    "endMs": 4100,
+    "timestampMs": 3970,
+    "confidence": 0.999603
+  },
+  {
+    "text": " fit.",
+    "startMs": 4100,
+    "endMs": 4320,
+    "timestampMs": 4210,
+    "confidence": 0.999748
+  },
+  {
+    "text": " A",
+    "startMs": 4320,
+    "endMs": 4420,
+    "timestampMs": 4370,
+    "confidence": 0.924245
+  },
+  {
+    "text": " Go",
+    "startMs": 4420,
+    "endMs": 4560,
+    "timestampMs": 4490,
+    "confidence": 0.792122
+  },
+  {
+    "text": " daemon,",
+    "startMs": 4560,
+    "endMs": 5210,
+    "timestampMs": 4885,
+    "confidence": null
+  },
+  {
+    "text": " the",
+    "startMs": 5210,
+    "endMs": 5410,
+    "timestampMs": 5310,
+    "confidence": 0.795092
+  },
+  {
+    "text": " Sentinel,",
+    "startMs": 5410,
+    "endMs": 6210,
+    "timestampMs": 5810,
+    "confidence": 0.764937
+  },
+  {
+    "text": " handles",
+    "startMs": 6210,
+    "endMs": 6690,
+    "timestampMs": 6450,
+    "confidence": 0.952772
+  },
+  {
+    "text": " reflexes",
+    "startMs": 6690,
+    "endMs": 7260,
+    "timestampMs": 6975,
+    "confidence": 0.994097
+  },
+  {
+    "text": " in",
+    "startMs": 7260,
+    "endMs": 7400,
+    "timestampMs": 7330,
+    "confidence": 0.973948
+  },
+  {
+    "text": " milliseconds.",
+    "startMs": 7400,
+    "endMs": 8480,
+    "timestampMs": 7940,
+    "confidence": 0.972149
+  },
+  {
+    "text": " A",
+    "startMs": 8480,
+    "endMs": 8600,
+    "timestampMs": 8540,
+    "confidence": 0.99578
+  },
+  {
+    "text": " Kiro",
+    "startMs": 8600,
+    "endMs": 8910,
+    "timestampMs": 8755,
+    "confidence": null
+  },
+  {
+    "text": " Crew",
+    "startMs": 8910,
+    "endMs": 9260,
+    "timestampMs": 9085,
+    "confidence": 0.94523
+  },
+  {
+    "text": " of",
+    "startMs": 9260,
+    "endMs": 9560,
+    "timestampMs": 9410,
+    "confidence": 0.9936
+  },
+  {
+    "text": " four",
+    "startMs": 9560,
+    "endMs": 9810,
+    "timestampMs": 9685,
+    "confidence": 0.959895
+  },
+  {
+    "text": " AI",
+    "startMs": 9810,
+    "endMs": 9950,
+    "timestampMs": 9880,
+    "confidence": 0.98304
+  },
+  {
+    "text": " agents",
+    "startMs": 9950,
+    "endMs": 10480,
+    "timestampMs": 10215,
+    "confidence": 0.989612
+  },
+  {
+    "text": " does",
+    "startMs": 10480,
+    "endMs": 10830,
+    "timestampMs": 10655,
+    "confidence": 0.987781
+  },
+  {
+    "text": " the",
+    "startMs": 10830,
+    "endMs": 11090,
+    "timestampMs": 10960,
+    "confidence": 0.999066
+  },
+  {
+    "text": " thinking.",
+    "startMs": 11090,
+    "endMs": 11860,
+    "timestampMs": 11475,
+    "confidence": 0.999283
+  },
+  {
+    "text": " And",
+    "startMs": 11860,
+    "endMs": 12090,
+    "timestampMs": 11975,
+    "confidence": 0.99774
+  },
+  {
+    "text": " a",
+    "startMs": 12090,
+    "endMs": 12160,
+    "timestampMs": 12125,
+    "confidence": 0.986474
+  },
+  {
+    "text": " WhatsApp",
+    "startMs": 12160,
+    "endMs": 12790,
+    "timestampMs": 12475,
+    "confidence": 0.817318
+  },
+  {
+    "text": " poll",
+    "startMs": 12790,
+    "endMs": 13100,
+    "timestampMs": 12945,
+    "confidence": 0.701271
+  },
+  {
+    "text": " keeps",
+    "startMs": 13100,
+    "endMs": 13490,
+    "timestampMs": 13295,
+    "confidence": 0.990074
+  },
+  {
+    "text": " a",
+    "startMs": 13490,
+    "endMs": 13560,
+    "timestampMs": 13525,
+    "confidence": 0.994514
+  },
+  {
+    "text": " human",
+    "startMs": 13560,
+    "endMs": 14000,
+    "timestampMs": 13780,
+    "confidence": 0.999062
+  },
+  {
+    "text": " in",
+    "startMs": 14000,
+    "endMs": 14120,
+    "timestampMs": 14060,
+    "confidence": 0.999703
+  },
+  {
+    "text": " charge",
+    "startMs": 14120,
+    "endMs": 14490,
+    "timestampMs": 14305,
+    "confidence": 0.998677
+  },
+  {
+    "text": " of",
+    "startMs": 14490,
+    "endMs": 14610,
+    "timestampMs": 14550,
+    "confidence": 0.9995
+  },
+  {
+    "text": " anything",
+    "startMs": 14610,
+    "endMs": 15100,
+    "timestampMs": 14855,
+    "confidence": 0.999355
+  },
+  {
+    "text": " that",
+    "startMs": 15100,
+    "endMs": 15380,
+    "timestampMs": 15240,
+    "confidence": 0.998856
+  },
+  {
+    "text": " can't",
+    "startMs": 15380,
+    "endMs": 15640,
+    "timestampMs": 15510,
+    "confidence": 0.999485
+  },
+  {
+    "text": " be",
+    "startMs": 15640,
+    "endMs": 15760,
+    "timestampMs": 15700,
+    "confidence": 0.99955
+  },
+  {
+    "text": " undone.",
+    "startMs": 15760,
+    "endMs": 16360,
+    "timestampMs": 16060,
+    "confidence": 0.996056
+  }
+]

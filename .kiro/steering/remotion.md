@@ -39,7 +39,9 @@ the design doc in sync when you change scenes, cues, or data sources.
 - Every number, log line, test name, and file name on screen comes from `src/data/`, produced by
   `npm run data` from the repository. Never type a number by hand.
 - Show the "SIMULATION REPLAY" chip whenever Graveyard footage or screenshots are on screen.
-- Narration text comes from `docs/DEMO_VIDEO_SCRIPT.md`. Change it there, then run `npm run data`.
+- Narration text comes from `docs/DEMO_VIDEO_SCRIPT.md`. Change it there, then run `npm run data`, `npm run vo`
+  (or re-record), and `npm run captions`, so voice, captions, and cues stay in step.
+- Fix a mispronunciation in the `LEXICON` of `scripts/make-vo.mjs`, never in the narration text.
 
 ## Rules from the Kiroween official rules
 

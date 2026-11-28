@@ -38,7 +38,18 @@ for (const scene of composition.props.scenes) {
     if (prev && (length + token.text.length > MAX_CHARS || shifted.startMs - prev.endMs > MAX_GAP_MS)) flush();
     cue.push(shifted);
     length += token.text.length;
-    if (/[.?!]$/.test(token.text.trim())) flush();
+    if (/[.?!]$/.test(token.text.trim())) {
+      // Ekor kalimat 1-2 kata digabung ke cue sebelumnya bila masih satu kalimat dan muat
+      const prev = lines.at(-1);
+      const prevText = prev ? prev.map((t) => t.text).join('') : '';
+      if (prev && cue.length <= 2 && !/[.?!]$/.test(prevText.trim()) && prevText.length + length <= MAX_CHARS + 16 && prev[0].startMs >= offsetMs) {
+        prev.push(...cue);
+        cue = [];
+        length = 0;
+      } else {
+        flush();
+      }
+    }
   }
   flush();
 }

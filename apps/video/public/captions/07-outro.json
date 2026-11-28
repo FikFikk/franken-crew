@@ -1,0 +1,163 @@
+[
+  {
+    "text": " FrankenCrew.",
+    "startMs": 140,
+    "endMs": 1280,
+    "timestampMs": 710,
+    "confidence": null
+  },
+  {
+    "text": " Reflexes",
+    "startMs": 1280,
+    "endMs": 2160,
+    "timestampMs": 1720,
+    "confidence": 0.768496
+  },
+  {
+    "text": " in",
+    "startMs": 2160,
+    "endMs": 2350,
+    "timestampMs": 2255,
+    "confidence": 0.96088
+  },
+  {
+    "text": " Go,",
+    "startMs": 2350,
+    "endMs": 2880,
+    "timestampMs": 2615,
+    "confidence": 0.843798
+  },
+  {
+    "text": " thinking",
+    "startMs": 2880,
+    "endMs": 3410,
+    "timestampMs": 3145,
+    "confidence": 0.732801
+  },
+  {
+    "text": " in",
+    "startMs": 3410,
+    "endMs": 3560,
+    "timestampMs": 3485,
+    "confidence": 0.768683
+  },
+  {
+    "text": " Kiro,",
+    "startMs": 3560,
+    "endMs": 3880,
+    "timestampMs": 3720,
+    "confidence": 0.495611
+  },
+  {
+    "text": " and",
+    "startMs": 3880,
+    "endMs": 4090,
+    "timestampMs": 3985,
+    "confidence": 0.997664
+  },
+  {
+    "text": " a",
+    "startMs": 4090,
+    "endMs": 4250,
+    "timestampMs": 4170,
+    "confidence": 0.818449
+  },
+  {
+    "text": " human",
+    "startMs": 4250,
+    "endMs": 4510,
+    "timestampMs": 4380,
+    "confidence": 0.766658
+  },
+  {
+    "text": " with",
+    "startMs": 4510,
+    "endMs": 4790,
+    "timestampMs": 4650,
+    "confidence": 0.997352
+  },
+  {
+    "text": " the",
+    "startMs": 4790,
+    "endMs": 4990,
+    "timestampMs": 4890,
+    "confidence": 0.921665
+  },
+  {
+    "text": " last",
+    "startMs": 4990,
+    "endMs": 5270,
+    "timestampMs": 5130,
+    "confidence": 0.972288
+  },
+  {
+    "text": " word.",
+    "startMs": 5270,
+    "endMs": 5800,
+    "timestampMs": 5535,
+    "confidence": 0.998631
+  },
+  {
+    "text": " Replays",
+    "startMs": 5800,
+    "endMs": 6370,
+    "timestampMs": 6085,
+    "confidence": 0.855248
+  },
+  {
+    "text": " at",
+    "startMs": 6370,
+    "endMs": 6620,
+    "timestampMs": 6495,
+    "confidence": 0.987212
+  },
+  {
+    "text": " frankencrew",
+    "startMs": 6620,
+    "endMs": 7555,
+    "timestampMs": 7088,
+    "confidence": null
+  },
+  {
+    "text": " dot",
+    "startMs": 7555,
+    "endMs": 7810,
+    "timestampMs": 7683,
+    "confidence": null
+  },
+  {
+    "text": " fikfikk",
+    "startMs": 7810,
+    "endMs": 8405,
+    "timestampMs": 8108,
+    "confidence": null
+  },
+  {
+    "text": " dot",
+    "startMs": 8405,
+    "endMs": 8660,
+    "timestampMs": 8533,
+    "confidence": null
+  },
+  {
+    "text": " my",
+    "startMs": 8660,
+    "endMs": 8830,
+    "timestampMs": 8745,
+    "confidence": null
+  },
+  {
+    "text": " dot",
+    "startMs": 8830,
+    "endMs": 9085,
+    "timestampMs": 8958,
+    "confidence": null
+  },
+  {
+    "text": " id.",
+    "startMs": 9085,
+    "endMs": 9340,
+    "timestampMs": 9213,
+    "confidence": null
+  }
+]

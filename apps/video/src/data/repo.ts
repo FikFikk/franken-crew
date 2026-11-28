@@ -1,6 +1,6 @@
 // Dihasilkan oleh scripts/collect-data.mjs dari repo. Jangan diedit manual; jalankan `npm run data`.
 export const repo = {
-  "collectedAtCommit": "43b6d3b",
+  "collectedAtCommit": "8548563",
   "narration": [
     "It's 3 a.m. A service on a small Linux server is leaking memory. In about two minutes the OOM killer will pick a victim, and nobody is on call.",
     "FrankenCrew stitches together three parts that were never meant to fit. A Go daemon, the Sentinel, handles reflexes in milliseconds. A Kiro Crew of four AI agents does the thinking. And a WhatsApp poll keeps a human in charge of anything that can't be undone.",
@@ -43,17 +43,17 @@ export const repo = {
     {
       "name": "TestApproval_Property_P2_TokenForPlanXNeverAuthorizesPlanY",
       "property": "P2",
-      "seconds": "0.06"
+      "seconds": "0.05"
     },
     {
       "name": "TestReflex_Property_P3_AppliedActionRolledBackExactlyOnce",
       "property": "P3",
-      "seconds": "0.19"
+      "seconds": "0.18"
     },
     {
       "name": "TestReflex_Property_P4_MemoryHighAlwaysGECurrentUsage",
       "property": "P4",
-      "seconds": "0.10"
+      "seconds": "0.09"
     }
   ],
   "propertyPackagesOk": 3,
@@ -63,7 +63,7 @@ export const repo = {
       "of": 20,
       "scenario": "memory_leak",
       "status": "PASS",
-      "reflexMs": "1.36",
+      "reflexMs": "1.40",
       "l2": "pm2_reload",
       "state": "RESOLVED"
     },
@@ -72,7 +72,7 @@ export const repo = {
       "of": 20,
       "scenario": "memory_spike",
       "status": "PASS",
-      "reflexMs": "1.14",
+      "reflexMs": "1.18",
       "l2": "unit_restart",
       "state": "RESOLVED"
     },
@@ -90,7 +90,7 @@ export const repo = {
       "of": 20,
       "scenario": "zombie_storm",
       "status": "PASS",
-      "reflexMs": "1.18",
+      "reflexMs": "1.11",
       "l2": "zombie_reap",
       "state": "RESOLVED"
     },
@@ -99,7 +99,7 @@ export const repo = {
       "of": 20,
       "scenario": "log_flood",
       "status": "PASS",
-      "reflexMs": "1.10",
+      "reflexMs": "1.14",
       "l2": "unit_restart",
       "state": "RESOLVED"
     },
@@ -108,7 +108,7 @@ export const repo = {
       "of": 20,
       "scenario": "memory_leak",
       "status": "PASS",
-      "reflexMs": "0.96",
+      "reflexMs": "0.86",
       "l2": "pm2_reload",
       "state": "RESOLVED"
     },
@@ -117,7 +117,7 @@ export const repo = {
       "of": 20,
       "scenario": "memory_spike",
       "status": "PASS",
-      "reflexMs": "1.15",
+      "reflexMs": "1.10",
       "l2": "unit_restart",
       "state": "RESOLVED"
     },
@@ -126,7 +126,7 @@ export const repo = {
       "of": 20,
       "scenario": "fork_storm",
       "status": "PASS",
-      "reflexMs": "1.13",
+      "reflexMs": "1.24",
       "l2": "process_terminate",
       "state": "RESOLVED"
     },
@@ -135,7 +135,7 @@ export const repo = {
       "of": 20,
       "scenario": "zombie_storm",
       "status": "PASS",
-      "reflexMs": "1.16",
+      "reflexMs": "1.06",
       "l2": "zombie_reap",
       "state": "RESOLVED"
     },
@@ -144,7 +144,7 @@ export const repo = {
       "of": 20,
       "scenario": "log_flood",
       "status": "PASS",
-      "reflexMs": "1.21",
+      "reflexMs": "1.12",
       "l2": "unit_restart",
       "state": "RESOLVED"
     },
@@ -153,7 +153,7 @@ export const repo = {
       "of": 20,
       "scenario": "memory_leak",
       "status": "PASS",
-      "reflexMs": "0.84",
+      "reflexMs": "0.80",
       "l2": "pm2_reload",
       "state": "RESOLVED"
     },
@@ -162,7 +162,7 @@ export const repo = {
       "of": 20,
       "scenario": "memory_spike",
       "status": "PASS",
-      "reflexMs": "1.19",
+      "reflexMs": "1.23",
       "l2": "unit_restart",
       "state": "RESOLVED"
     },
@@ -171,7 +171,7 @@ export const repo = {
       "of": 20,
       "scenario": "fork_storm",
       "status": "PASS",
-      "reflexMs": "1.16",
+      "reflexMs": "1.08",
       "l2": "process_terminate",
       "state": "RESOLVED"
     },
@@ -180,7 +180,7 @@ export const repo = {
       "of": 20,
       "scenario": "zombie_storm",
       "status": "PASS",
-      "reflexMs": "1.07",
+      "reflexMs": "1.16",
       "l2": "zombie_reap",
       "state": "RESOLVED"
     },
@@ -189,7 +189,7 @@ export const repo = {
       "of": 20,
       "scenario": "log_flood",
       "status": "PASS",
-      "reflexMs": "1.27",
+      "reflexMs": "1.81",
       "l2": "unit_restart",
       "state": "RESOLVED"
     },
@@ -198,7 +198,7 @@ export const repo = {
       "of": 20,
       "scenario": "memory_leak",
       "status": "PASS",
-      "reflexMs": "0.83",
+      "reflexMs": "0.90",
       "l2": "pm2_reload",
       "state": "RESOLVED"
     },
@@ -207,7 +207,7 @@ export const repo = {
       "of": 20,
       "scenario": "memory_spike",
       "status": "PASS",
-      "reflexMs": "1.20",
+      "reflexMs": "1.05",
       "l2": "unit_restart",
       "state": "RESOLVED"
     },
@@ -216,7 +216,7 @@ export const repo = {
       "of": 20,
       "scenario": "fork_storm",
       "status": "PASS",
-      "reflexMs": "1.15",
+      "reflexMs": "1.95",
       "l2": "process_terminate",
       "state": "RESOLVED"
     },
@@ -225,7 +225,7 @@ export const repo = {
       "of": 20,
       "scenario": "zombie_storm",
       "status": "PASS",
-      "reflexMs": "1.51",
+      "reflexMs": "1.93",
       "l2": "zombie_reap",
       "state": "RESOLVED"
     },
@@ -234,12 +234,12 @@ export const repo = {
       "of": 20,
       "scenario": "log_flood",
       "status": "PASS",
-      "reflexMs": "1.66",
+      "reflexMs": "1.86",
       "l2": "unit_restart",
       "state": "RESOLVED"
     }
   ],
-  "chaosSummary": "Summary: passed=20/20 failed=0 max_reflex_ms=1.66 avg_reflex_ms=1.17",
+  "chaosSummary": "Summary: passed=20/20 failed=0 max_reflex_ms=1.95 avg_reflex_ms=1.25",
   "guard": {
     "command": "franken guard --audit",
     "trigger": "PreToolUse",
