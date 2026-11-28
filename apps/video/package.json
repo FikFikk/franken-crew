@@ -33,6 +33,7 @@
     "dev": "remotion studio",
     "data": "node scripts/collect-data.mjs",
     "stills": "node scripts/stills.mjs",
+    "vo": "node scripts/make-vo.mjs",
     "captions": "node scripts/make-captions.mjs",
     "srt": "node scripts/make-srt.mjs",
     "render": "remotion render FrankenCrewDemo out/frankencrew-demo.mp4 --codec=h264 --crf=18",

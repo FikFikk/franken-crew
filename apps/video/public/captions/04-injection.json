@@ -1,0 +1,408 @@
+[
+  {
+    "text": " What",
+    "startMs": 40,
+    "endMs": 310,
+    "timestampMs": 175,
+    "confidence": 0.837318
+  },
+  {
+    "text": " if",
+    "startMs": 310,
+    "endMs": 450,
+    "timestampMs": 380,
+    "confidence": 0.998243
+  },
+  {
+    "text": " an",
+    "startMs": 450,
+    "endMs": 620,
+    "timestampMs": 535,
+    "confidence": 0.997725
+  },
+  {
+    "text": " agent",
+    "startMs": 620,
+    "endMs": 960,
+    "timestampMs": 790,
+    "confidence": 0.991594
+  },
+  {
+    "text": " is",
+    "startMs": 960,
+    "endMs": 1120,
+    "timestampMs": 1040,
+    "confidence": 0.998281
+  },
+  {
+    "text": " wrong,",
+    "startMs": 1120,
+    "endMs": 1490,
+    "timestampMs": 1305,
+    "confidence": 0.999035
+  },
+  {
+    "text": " or",
+    "startMs": 1490,
+    "endMs": 1630,
+    "timestampMs": 1560,
+    "confidence": 0.955766
+  },
+  {
+    "text": " tricked?",
+    "startMs": 1630,
+    "endMs": 2400,
+    "timestampMs": 2015,
+    "confidence": 0.972795
+  },
+  {
+    "text": " Here",
+    "startMs": 2400,
+    "endMs": 2810,
+    "timestampMs": 2605,
+    "confidence": 0.997512
+  },
+  {
+    "text": " a",
+    "startMs": 2810,
+    "endMs": 2910,
+    "timestampMs": 2860,
+    "confidence": 0.668603
+  },
+  {
+    "text": " log",
+    "startMs": 2910,
+    "endMs": 3200,
+    "timestampMs": 3055,
+    "confidence": 0.99314
+  },
+  {
+    "text": " line",
+    "startMs": 3200,
+    "endMs": 3670,
+    "timestampMs": 3435,
+    "confidence": 0.628694
+  },
+  {
+    "text": " tells",
+    "startMs": 3670,
+    "endMs": 3960,
+    "timestampMs": 3815,
+    "confidence": 0.982221
+  },
+  {
+    "text": " the",
+    "startMs": 3960,
+    "endMs": 4120,
+    "timestampMs": 4040,
+    "confidence": 0.994962
+  },
+  {
+    "text": " operator",
+    "startMs": 4120,
+    "endMs": 4620,
+    "timestampMs": 4370,
+    "confidence": 0.996772
+  },
+  {
+    "text": " to",
+    "startMs": 4620,
+    "endMs": 4800,
+    "timestampMs": 4710,
+    "confidence": 0.905975
+  },
+  {
+    "text": " restart",
+    "startMs": 4800,
+    "endMs": 5510,
+    "timestampMs": 5155,
+    "confidence": 0.996772
+  },
+  {
+    "text": " ssh.service.",
+    "startMs": 5510,
+    "endMs": 6800,
+    "timestampMs": 6155,
+    "confidence": null
+  },
+  {
+    "text": " The",
+    "startMs": 6800,
+    "endMs": 7010,
+    "timestampMs": 6905,
+    "confidence": 0.99958
+  },
+  {
+    "text": " agents",
+    "startMs": 7010,
+    "endMs": 7410,
+    "timestampMs": 7210,
+    "confidence": 0.996683
+  },
+  {
+    "text": " read",
+    "startMs": 7410,
+    "endMs": 7700,
+    "timestampMs": 7555,
+    "confidence": 0.999519
+  },
+  {
+    "text": " it,",
+    "startMs": 7700,
+    "endMs": 7840,
+    "timestampMs": 7770,
+    "confidence": 0.999657
+  },
+  {
+    "text": " and",
+    "startMs": 7840,
+    "endMs": 8090,
+    "timestampMs": 7965,
+    "confidence": 0.703346
+  },
+  {
+    "text": " it",
+    "startMs": 8090,
+    "endMs": 8190,
+    "timestampMs": 8140,
+    "confidence": 0.999253
+  },
+  {
+    "text": " doesn't",
+    "startMs": 8190,
+    "endMs": 8660,
+    "timestampMs": 8425,
+    "confidence": 0.999409
+  },
+  {
+    "text": " matter.",
+    "startMs": 8660,
+    "endMs": 9320,
+    "timestampMs": 8990,
+    "confidence": 0.999718
+  },
+  {
+    "text": " The",
+    "startMs": 9320,
+    "endMs": 9590,
+    "timestampMs": 9455,
+    "confidence": 0.999535
+  },
+  {
+    "text": " policy",
+    "startMs": 9590,
+    "endMs": 10130,
+    "timestampMs": 9860,
+    "confidence": 0.99478
+  },
+  {
+    "text": " rejects",
+    "startMs": 10130,
+    "endMs": 10760,
+    "timestampMs": 10445,
+    "confidence": 0.998407
+  },
+  {
+    "text": " the",
+    "startMs": 10760,
+    "endMs": 11400,
+    "timestampMs": 11080,
+    "confidence": 0.999649
+  },
+  {
+    "text": " plan,",
+    "startMs": 11400,
+    "endMs": 11450,
+    "timestampMs": 11425,
+    "confidence": 0.999378
+  },
+  {
+    "text": " because",
+    "startMs": 11450,
+    "endMs": 11780,
+    "timestampMs": 11615,
+    "confidence": 0.618558
+  },
+  {
+    "text": " ssh",
+    "startMs": 11780,
+    "endMs": 12450,
+    "timestampMs": 12115,
+    "confidence": 0.94112
+  },
+  {
+    "text": " is",
+    "startMs": 12450,
+    "endMs": 12640,
+    "timestampMs": 12545,
+    "confidence": 0.905288
+  },
+  {
+    "text": " protected",
+    "startMs": 12640,
+    "endMs": 13400,
+    "timestampMs": 13020,
+    "confidence": 0.997786
+  },
+  {
+    "text": " and",
+    "startMs": 13400,
+    "endMs": 13600,
+    "timestampMs": 13500,
+    "confidence": 0.999565
+  },
+  {
+    "text": " outside",
+    "startMs": 13600,
+    "endMs": 14080,
+    "timestampMs": 13840,
+    "confidence": 0.99918
+  },
+  {
+    "text": " the",
+    "startMs": 14080,
+    "endMs": 14300,
+    "timestampMs": 14190,
+    "confidence": 0.997801
+  },
+  {
+    "text": " incident's",
+    "startMs": 14300,
+    "endMs": 14982,
+    "timestampMs": 14641,
+    "confidence": null
+  },
+  {
+    "text": " cgroup.",
+    "startMs": 14982,
+    "endMs": 15460,
+    "timestampMs": 15221,
+    "confidence": null
+  },
+  {
+    "text": " A",
+    "startMs": 15460,
+    "endMs": 15550,
+    "timestampMs": 15505,
+    "confidence": 0.999413
+  },
+  {
+    "text": " direct",
+    "startMs": 15550,
+    "endMs": 16090,
+    "timestampMs": 15820,
+    "confidence": 0.978355
+  },
+  {
+    "text": " restart",
+    "startMs": 16090,
+    "endMs": 16720,
+    "timestampMs": 16405,
+    "confidence": 0.998479
+  },
+  {
+    "text": " is",
+    "startMs": 16720,
+    "endMs": 16900,
+    "timestampMs": 16810,
+    "confidence": 0.999367
+  },
+  {
+    "text": " blocked.",
+    "startMs": 16900,
+    "endMs": 17560,
+    "timestampMs": 17230,
+    "confidence": 0.999481
+  },
+  {
+    "text": " And",
+    "startMs": 17560,
+    "endMs": 17800,
+    "timestampMs": 17680,
+    "confidence": 0.9996
+  },
+  {
+    "text": " a",
+    "startMs": 17800,
+    "endMs": 17880,
+    "timestampMs": 17840,
+    "confidence": 0.998753
+  },
+  {
+    "text": " replayed",
+    "startMs": 17880,
+    "endMs": 18520,
+    "timestampMs": 18200,
+    "confidence": 0.467963
+  },
+  {
+    "text": " approval",
+    "startMs": 18520,
+    "endMs": 19170,
+    "timestampMs": 18845,
+    "confidence": 0.990807
+  },
+  {
+    "text": " token",
+    "startMs": 19170,
+    "endMs": 19580,
+    "timestampMs": 19375,
+    "confidence": 0.999325
+  },
+  {
+    "text": " is",
+    "startMs": 19580,
+    "endMs": 19730,
+    "timestampMs": 19655,
+    "confidence": 0.995072
+  },
+  {
+    "text": " refused,",
+    "startMs": 19730,
+    "endMs": 20340,
+    "timestampMs": 20035,
+    "confidence": 0.998171
+  },
+  {
+    "text": " because",
+    "startMs": 20340,
+    "endMs": 20760,
+    "timestampMs": 20550,
+    "confidence": 0.99984
+  },
+  {
+    "text": " its",
+    "startMs": 20760,
+    "endMs": 21000,
+    "timestampMs": 20880,
+    "confidence": 0.663934
+  },
+  {
+    "text": " nonce",
+    "startMs": 21000,
+    "endMs": 21300,
+    "timestampMs": 21150,
+    "confidence": 0.685121
+  },
+  {
+    "text": " was",
+    "startMs": 21300,
+    "endMs": 21480,
+    "timestampMs": 21390,
+    "confidence": 0.997794
+  },
+  {
+    "text": " already",
+    "startMs": 21480,
+    "endMs": 21890,
+    "timestampMs": 21685,
+    "confidence": 0.998967
+  },
+  {
+    "text": " used.",
+    "startMs": 21890,
+    "endMs": 22360,
+    "timestampMs": 22125,
+    "confidence": 0.99963
+  }
+]

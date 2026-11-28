@@ -18,7 +18,8 @@ Node 20.19+, 22.13+, or 24+. `npm run data` also needs Go and git.
 | `npm run data` | Rebuild `src/data/` from the repo (runs the chaos suite, the property tests, and `franken guard`) |
 | `npm run dev` | Open Remotion Studio to preview and scrub |
 | `npm run stills` | Render two stills per scene to `out/stills/` (`-- --cues` adds one per cue, `-- 1200 2400` renders those frames) |
-| `npm run captions` | Transcribe `public/vo/*.wav` with a local Whisper.cpp into `public/captions/*.json` |
+| `npm run vo` | Synthesize `public/vo/*.wav` from the narration with Kokoro-82M (needs `kokoro-js`, see below) |
+| `npm run captions` | Time `public/vo/*.wav` with a local Whisper.cpp and write `public/captions/*.json` with the script's spelling |
 | `npm run render` | Render `out/frankencrew-demo.mp4` (1080p, H.264, CRF 18) |
 | `npm run preview` | Render a quick half-size `out/frankencrew-preview.mp4` |
 | `npm run srt` | Write `out/frankencrew-demo.srt` for the YouTube upload |
@@ -29,9 +30,19 @@ Node 20.19+, 22.13+, or 24+. `npm run data` also needs Go and git.
 
 1. `npm run data`, then `npm run dev` and watch the silent cut. Without a voiceover, every scene uses its
    budget length and the cue frames are estimated from the narration text.
-2. Record the seven narration paragraphs as `public/vo/01-hook.wav` … `07-outro.wav` (one take per scene).
-3. `npm run captions`. Fix misheard words in `public/captions/*.json` by hand and keep the times. Scene
-   lengths now follow your voice, and every animation cue lands on its spoken word.
+2. Get a voiceover into `public/vo/01-hook.wav` … `07-outro.wav`, one file per scene. Either record the
+   seven narration paragraphs yourself, or synthesize them:
+
+   ```bash
+   ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm install --no-save kokoro-js@1.2.1   # once, about 350 MB
+   npm run vo                                                              # KOKORO_VOICE=am_michael for a male voice
+   ```
+
+   The committed files are Kokoro voice `af_heart` at speed 0.95, about 147 s of speech.
+3. `npm run captions`. Whisper supplies the word timing and the text is aligned to the narration, so the
+   captions use the script's spelling (it prints every word Whisper heard differently). Scene lengths now
+   follow the voice, and every animation cue lands on its spoken word. Use `-- --no-snap` if you read off
+   script.
 4. `npm run dev` again and scrub each scene. The render fails on purpose if the video is longer than 2:55.
 5. `npm run render`, `npm run srt`, `npm run thumbnail`, then upload to YouTube as described in
    `docs/DEMO_VIDEO_SCRIPT.md`.

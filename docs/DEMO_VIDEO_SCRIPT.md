@@ -5,8 +5,9 @@ must land before that.
 
 The video is built in code with Remotion in [`apps/video/`](../apps/video/) (design in
 [REMOTION_VIDEO.md](REMOTION_VIDEO.md)). It reads the narration column of the shot list below through
-`npm run data`, so edit the narration here. What is left for you: record the voice, run `npm run captions`, and
-render. The steps are in [apps/video/README.md](../apps/video/README.md).
+`npm run data`, so edit the narration here. The committed voiceover is synthesized from this narration with
+Kokoro-82M (`npm run vo`); to use your own voice instead, record the seven paragraphs, run `npm run captions`,
+and render. The steps are in [apps/video/README.md](../apps/video/README.md).
 
 ## What the rules require
 
@@ -74,8 +75,10 @@ long. Change any wording that does not sound like you.
   Code (MIT): https://github.com/FikFikk/franken-crew
 
   The replays shown are simulations through the real engine and are labelled as such in the UI.
+  Narration voice: Kokoro-82M (Apache-2.0), synthesized locally.
   ```
 
-- Captions: upload the narration column as an English transcript, or check YouTube's automatic captions.
+- Captions: upload `apps/video/out/frankencrew-demo.srt` (from `npm run srt`) under Subtitles, English.
+- Thumbnail: upload `apps/video/out/thumbnail.png` (from `npm run thumbnail`).
 - After upload, open the link in a private window to confirm it plays without signing in, then paste it into
   the Devpost form and into `docs/DEVPOST_SUBMISSION.md`.

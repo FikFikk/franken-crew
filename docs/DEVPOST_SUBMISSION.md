@@ -242,7 +242,8 @@ design skill (commit `df656e3`).
 The demo video itself is code: a Remotion project in `apps/video/`, built in Kiro Web with a `fileMatch`
 steering file that loads only for that folder. `npm run data` regenerates every number on screen from the
 repository (the chaos suite, the property tests, a real `franken guard` run, the spec counts), and the
-animations are timed to the words of the recorded voiceover through Whisper captions.
+animations are timed to the words of the voiceover through Whisper captions. The narration voice is
+Kokoro-82M (Apache-2.0), synthesized locally from the script in `docs/DEMO_VIDEO_SCRIPT.md`.
 
 ### Where Kiro helped most, and where it needed correcting
 

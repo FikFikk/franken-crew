@@ -1,0 +1,625 @@
+[
+  {
+    "text": " I",
+    "startMs": 40,
+    "endMs": 80,
+    "timestampMs": 60,
+    "confidence": 0.941153
+  },
+  {
+    "text": " built",
+    "startMs": 80,
+    "endMs": 480,
+    "timestampMs": 280,
+    "confidence": 0.989281
+  },
+  {
+    "text": " FrankenCrew",
+    "startMs": 480,
+    "endMs": 1370,
+    "timestampMs": 925,
+    "confidence": 0.741629
+  },
+  {
+    "text": " with",
+    "startMs": 1370,
+    "endMs": 1730,
+    "timestampMs": 1550,
+    "confidence": 0.985556
+  },
+  {
+    "text": " Kiro,",
+    "startMs": 1730,
+    "endMs": 2170,
+    "timestampMs": 1950,
+    "confidence": 0.313276
+  },
+  {
+    "text": " spec",
+    "startMs": 2170,
+    "endMs": 2500,
+    "timestampMs": 2335,
+    "confidence": 0.855544
+  },
+  {
+    "text": " first.",
+    "startMs": 2500,
+    "endMs": 2960,
+    "timestampMs": 2730,
+    "confidence": 0.906961
+  },
+  {
+    "text": " Twelve",
+    "startMs": 2960,
+    "endMs": 3470,
+    "timestampMs": 3215,
+    "confidence": null
+  },
+  {
+    "text": " requirements",
+    "startMs": 3470,
+    "endMs": 4340,
+    "timestampMs": 3905,
+    "confidence": 0.985451
+  },
+  {
+    "text": " in",
+    "startMs": 4340,
+    "endMs": 4490,
+    "timestampMs": 4415,
+    "confidence": 0.98319
+  },
+  {
+    "text": " EARS",
+    "startMs": 4490,
+    "endMs": 4780,
+    "timestampMs": 4635,
+    "confidence": 0.833926
+  },
+  {
+    "text": " form,",
+    "startMs": 4780,
+    "endMs": 5280,
+    "timestampMs": 5030,
+    "confidence": 0.983674
+  },
+  {
+    "text": " a",
+    "startMs": 5280,
+    "endMs": 5340,
+    "timestampMs": 5310,
+    "confidence": 0.996831
+  },
+  {
+    "text": " design",
+    "startMs": 5340,
+    "endMs": 5720,
+    "timestampMs": 5530,
+    "confidence": 0.999214
+  },
+  {
+    "text": " with",
+    "startMs": 5720,
+    "endMs": 6110,
+    "timestampMs": 5915,
+    "confidence": 0.999359
+  },
+  {
+    "text": " four",
+    "startMs": 6110,
+    "endMs": 6220,
+    "timestampMs": 6165,
+    "confidence": 0.946687
+  },
+  {
+    "text": " properties",
+    "startMs": 6220,
+    "endMs": 6910,
+    "timestampMs": 6565,
+    "confidence": 0.999458
+  },
+  {
+    "text": " that",
+    "startMs": 6910,
+    "endMs": 7080,
+    "timestampMs": 6995,
+    "confidence": 0.831401
+  },
+  {
+    "text": " must",
+    "startMs": 7080,
+    "endMs": 7280,
+    "timestampMs": 7180,
+    "confidence": 0.99401
+  },
+  {
+    "text": " never",
+    "startMs": 7280,
+    "endMs": 7760,
+    "timestampMs": 7520,
+    "confidence": 0.984695
+  },
+  {
+    "text": " break,",
+    "startMs": 7760,
+    "endMs": 8240,
+    "timestampMs": 8000,
+    "confidence": 0.997817
+  },
+  {
+    "text": " and",
+    "startMs": 8240,
+    "endMs": 8620,
+    "timestampMs": 8430,
+    "confidence": 0.999672
+  },
+  {
+    "text": " 52",
+    "startMs": 8620,
+    "endMs": 9130,
+    "timestampMs": 8875,
+    "confidence": 0.996649
+  },
+  {
+    "text": " tasks.",
+    "startMs": 9130,
+    "endMs": 9940,
+    "timestampMs": 9535,
+    "confidence": 0.998864
+  },
+  {
+    "text": " Each",
+    "startMs": 9940,
+    "endMs": 10280,
+    "timestampMs": 10110,
+    "confidence": 0.999237
+  },
+  {
+    "text": " property",
+    "startMs": 10280,
+    "endMs": 10840,
+    "timestampMs": 10560,
+    "confidence": 0.999352
+  },
+  {
+    "text": " became",
+    "startMs": 10840,
+    "endMs": 11290,
+    "timestampMs": 11065,
+    "confidence": 0.996109
+  },
+  {
+    "text": " a",
+    "startMs": 11290,
+    "endMs": 11360,
+    "timestampMs": 11325,
+    "confidence": 0.999272
+  },
+  {
+    "text": " property-based",
+    "startMs": 11360,
+    "endMs": 12760,
+    "timestampMs": 12060,
+    "confidence": 0.987178
+  },
+  {
+    "text": " test,",
+    "startMs": 12760,
+    "endMs": 12760,
+    "timestampMs": 12760,
+    "confidence": 0.999047
+  },
+  {
+    "text": " like",
+    "startMs": 12760,
+    "endMs": 13120,
+    "timestampMs": 12940,
+    "confidence": 0.998517
+  },
+  {
+    "text": " \"a",
+    "startMs": 13120,
+    "endMs": 13210,
+    "timestampMs": 13165,
+    "confidence": 0.994852
+  },
+  {
+    "text": " token",
+    "startMs": 13210,
+    "endMs": 13660,
+    "timestampMs": 13435,
+    "confidence": 0.99548
+  },
+  {
+    "text": " for",
+    "startMs": 13660,
+    "endMs": 13930,
+    "timestampMs": 13795,
+    "confidence": 0.99811
+  },
+  {
+    "text": " plan",
+    "startMs": 13930,
+    "endMs": 14290,
+    "timestampMs": 14110,
+    "confidence": 0.615992
+  },
+  {
+    "text": " X",
+    "startMs": 14290,
+    "endMs": 14420,
+    "timestampMs": 14355,
+    "confidence": 0.983509
+  },
+  {
+    "text": " never",
+    "startMs": 14420,
+    "endMs": 14830,
+    "timestampMs": 14625,
+    "confidence": 0.978532
+  },
+  {
+    "text": " authorizes",
+    "startMs": 14830,
+    "endMs": 15730,
+    "timestampMs": 15280,
+    "confidence": 0.997636
+  },
+  {
+    "text": " plan",
+    "startMs": 15730,
+    "endMs": 16070,
+    "timestampMs": 15900,
+    "confidence": 0.973394
+  },
+  {
+    "text": " Y\".",
+    "startMs": 16070,
+    "endMs": 16520,
+    "timestampMs": 16295,
+    "confidence": 0.998841
+  },
+  {
+    "text": " Steering",
+    "startMs": 16520,
+    "endMs": 17080,
+    "timestampMs": 16800,
+    "confidence": 0.949949
+  },
+  {
+    "text": " loads",
+    "startMs": 17080,
+    "endMs": 17440,
+    "timestampMs": 17260,
+    "confidence": 0.992545
+  },
+  {
+    "text": " the",
+    "startMs": 17440,
+    "endMs": 17640,
+    "timestampMs": 17540,
+    "confidence": 0.985876
+  },
+  {
+    "text": " kernel",
+    "startMs": 17640,
+    "endMs": 18060,
+    "timestampMs": 17850,
+    "confidence": 0.927225
+  },
+  {
+    "text": " rules",
+    "startMs": 18060,
+    "endMs": 18440,
+    "timestampMs": 18250,
+    "confidence": 0.999352
+  },
+  {
+    "text": " only",
+    "startMs": 18440,
+    "endMs": 18770,
+    "timestampMs": 18605,
+    "confidence": 0.999893
+  },
+  {
+    "text": " when",
+    "startMs": 18770,
+    "endMs": 19100,
+    "timestampMs": 18935,
+    "confidence": 0.999439
+  },
+  {
+    "text": " Kiro",
+    "startMs": 19100,
+    "endMs": 19440,
+    "timestampMs": 19270,
+    "confidence": 0.996041
+  },
+  {
+    "text": " edits",
+    "startMs": 19440,
+    "endMs": 19830,
+    "timestampMs": 19635,
+    "confidence": 0.997729
+  },
+  {
+    "text": " kernel",
+    "startMs": 19830,
+    "endMs": 20320,
+    "timestampMs": 20075,
+    "confidence": 0.980376
+  },
+  {
+    "text": " code.",
+    "startMs": 20320,
+    "endMs": 20920,
+    "timestampMs": 20620,
+    "confidence": 0.99939
+  },
+  {
+    "text": " A",
+    "startMs": 20920,
+    "endMs": 21050,
+    "timestampMs": 20985,
+    "confidence": 0.999234
+  },
+  {
+    "text": " PreToolUse",
+    "startMs": 21050,
+    "endMs": 21940,
+    "timestampMs": 21495,
+    "confidence": null
+  },
+  {
+    "text": " hook",
+    "startMs": 21940,
+    "endMs": 22420,
+    "timestampMs": 22180,
+    "confidence": 0.41714
+  },
+  {
+    "text": " sends",
+    "startMs": 22420,
+    "endMs": 22750,
+    "timestampMs": 22585,
+    "confidence": 0.791131
+  },
+  {
+    "text": " every",
+    "startMs": 22750,
+    "endMs": 23090,
+    "timestampMs": 22920,
+    "confidence": 0.993744
+  },
+  {
+    "text": " call",
+    "startMs": 23090,
+    "endMs": 23400,
+    "timestampMs": 23245,
+    "confidence": 0.998525
+  },
+  {
+    "text": " to",
+    "startMs": 23400,
+    "endMs": 23700,
+    "timestampMs": 23550,
+    "confidence": 0.999931
+  },
+  {
+    "text": " the",
+    "startMs": 23700,
+    "endMs": 23910,
+    "timestampMs": 23805,
+    "confidence": 0.999363
+  },
+  {
+    "text": " FrankenCrew",
+    "startMs": 23910,
+    "endMs": 25070,
+    "timestampMs": 24490,
+    "confidence": 0.993472
+  },
+  {
+    "text": " MCP",
+    "startMs": 25070,
+    "endMs": 25340,
+    "timestampMs": 25205,
+    "confidence": 0.975619
+  },
+  {
+    "text": " tools",
+    "startMs": 25340,
+    "endMs": 25940,
+    "timestampMs": 25640,
+    "confidence": 0.9414
+  },
+  {
+    "text": " through",
+    "startMs": 25940,
+    "endMs": 26120,
+    "timestampMs": 26030,
+    "confidence": 0.329169
+  },
+  {
+    "text": " the",
+    "startMs": 26120,
+    "endMs": 26370,
+    "timestampMs": 26245,
+    "confidence": 0.988474
+  },
+  {
+    "text": " same",
+    "startMs": 26370,
+    "endMs": 26730,
+    "timestampMs": 26550,
+    "confidence": 0.999668
+  },
+  {
+    "text": " guard",
+    "startMs": 26730,
+    "endMs": 27200,
+    "timestampMs": 26965,
+    "confidence": 0.981706
+  },
+  {
+    "text": " the",
+    "startMs": 27200,
+    "endMs": 27410,
+    "timestampMs": 27305,
+    "confidence": 0.995797
+  },
+  {
+    "text": " agents",
+    "startMs": 27410,
+    "endMs": 27830,
+    "timestampMs": 27620,
+    "confidence": 0.995429
+  },
+  {
+    "text": " meet",
+    "startMs": 27830,
+    "endMs": 28110,
+    "timestampMs": 27970,
+    "confidence": 0.99811
+  },
+  {
+    "text": " in",
+    "startMs": 28110,
+    "endMs": 28260,
+    "timestampMs": 28185,
+    "confidence": 0.999653
+  },
+  {
+    "text": " production.",
+    "startMs": 28260,
+    "endMs": 29200,
+    "timestampMs": 28730,
+    "confidence": 0.997409
+  },
+  {
+    "text": " The",
+    "startMs": 29250,
+    "endMs": 29400,
+    "timestampMs": 29325,
+    "confidence": 0.998738
+  },
+  {
+    "text": " audit",
+    "startMs": 29400,
+    "endMs": 29800,
+    "timestampMs": 29600,
+    "confidence": 0.988385
+  },
+  {
+    "text": " and",
+    "startMs": 29800,
+    "endMs": 29910,
+    "timestampMs": 29855,
+    "confidence": 0.996736
+  },
+  {
+    "text": " hardening",
+    "startMs": 29910,
+    "endMs": 30500,
+    "timestampMs": 30205,
+    "confidence": 0.998854
+  },
+  {
+    "text": " rounds",
+    "startMs": 30500,
+    "endMs": 30960,
+    "timestampMs": 30730,
+    "confidence": 0.997919
+  },
+  {
+    "text": " ran",
+    "startMs": 30960,
+    "endMs": 31350,
+    "timestampMs": 31155,
+    "confidence": 0.957605
+  },
+  {
+    "text": " in",
+    "startMs": 31350,
+    "endMs": 31630,
+    "timestampMs": 31490,
+    "confidence": 0.989436
+  },
+  {
+    "text": " Kiro",
+    "startMs": 31630,
+    "endMs": 32640,
+    "timestampMs": 32135,
+    "confidence": 0.99257
+  },
+  {
+    "text": " Web,",
+    "startMs": 32640,
+    "endMs": 32640,
+    "timestampMs": 32640,
+    "confidence": 0.382323
+  },
+  {
+    "text": " and",
+    "startMs": 32640,
+    "endMs": 32850,
+    "timestampMs": 32745,
+    "confidence": 0.999287
+  },
+  {
+    "text": " each",
+    "startMs": 32850,
+    "endMs": 33140,
+    "timestampMs": 32995,
+    "confidence": 0.999497
+  },
+  {
+    "text": " one",
+    "startMs": 33140,
+    "endMs": 33350,
+    "timestampMs": 33245,
+    "confidence": 0.99942
+  },
+  {
+    "text": " came",
+    "startMs": 33350,
+    "endMs": 33640,
+    "timestampMs": 33495,
+    "confidence": 0.999611
+  },
+  {
+    "text": " back",
+    "startMs": 33640,
+    "endMs": 33930,
+    "timestampMs": 33785,
+    "confidence": 0.99984
+  },
+  {
+    "text": " as",
+    "startMs": 33930,
+    "endMs": 34110,
+    "timestampMs": 34020,
+    "confidence": 0.998559
+  },
+  {
+    "text": " a",
+    "startMs": 34110,
+    "endMs": 34200,
+    "timestampMs": 34155,
+    "confidence": 0.998906
+  },
+  {
+    "text": " pull",
+    "startMs": 34200,
+    "endMs": 34430,
+    "timestampMs": 34315,
+    "confidence": 0.926309
+  },
+  {
+    "text": " request.",
+    "startMs": 34430,
+    "endMs": 35200,
+    "timestampMs": 34815,
+    "confidence": 0.99639
+  }
+]
